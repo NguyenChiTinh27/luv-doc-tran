@@ -18,6 +18,10 @@ class TestTranslationPipeline(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
         self.test_device = "TEST-E2E-DEV-001"
+        trials = LUVLicenseClient._read_trials()
+        if self.test_device in trials and trials[self.test_device].get("revoked"):
+            trials[self.test_device]["revoked"] = False
+            LUVLicenseClient._write_trials(trials)
 
     def test_status_endpoint(self):
         """Verify system status endpoint."""

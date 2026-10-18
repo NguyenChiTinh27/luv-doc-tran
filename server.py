@@ -151,8 +151,19 @@ def get_trial_status(device_id: str = ""):
 
 @app.get("/api/license/status")
 def get_license_status():
-    """Get stored license activation state."""
-    return LUVLicenseClient.get_license_info()
+    """Get stored license activation state with real-time Cloudflare Worker validation."""
+    try:
+        return LUVLicenseClient.validate_license()
+    except Exception as e:
+        return {
+            "is_active": False,
+            "revoked": False,
+            "tier": "Chưa kích hoạt",
+            "registered_to": None,
+            "customer": None,
+            "license_key": None,
+            "error": str(e)
+        }
 
 
 @app.post("/api/license/activate")
@@ -267,15 +278,27 @@ async def process_translation(
     - Prioritizes Word (.docx) generation for instant delivery.
     - Supports Word (.docx, .doc), PDF (auto-converted to docx), and Excel (.xlsx, .xls).
     """
-    # 1. Access Control Check (48h trial or License Key)
-    access = LUVLicenseClient.check_access(device_id)
+    # 1. Real-time license validation & revocation check
+    lic_status = LUVLicenseClient.validate_license(client_device_hint=device_id, device_id=device_id)
+    if lic_status.get("revoked"):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "success": False,
+                "revoked": True,
+                "message": "Giấy phép bản quyền đã bị thu hồi bởi Quản trị viên. Quyền dịch thuật bị khóa vĩnh viễn."
+            }
+        )
+
+    # 2. Access Control Check (48h trial or License Key)
+    access = LUVLicenseClient.check_access(device_id=device_id, validated_license=lic_status)
     if not access["has_access"]:
         return JSONResponse(
             status_code=403,
             content={
                 "success": False,
                 "trial_expired": True,
-                "message": "Thời hạn dùng thử 48 giờ miễn phí đã kết thúc. Vui lòng kích hoạt Mã Bản Quyền chính thức để tiếp tục sử dụng."
+                "message": access.get("message") or "Thời hạn dùng thử 48 giờ miễn phí đã kết thúc. Vui lòng kích hoạt Mã Bản Quyền chính thức để tiếp tục sử dụng."
             }
         )
 

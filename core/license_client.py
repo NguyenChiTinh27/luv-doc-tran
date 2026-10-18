@@ -6,6 +6,9 @@ Hệ thống xác thực giấy phép bản quyền LUV-DOC-TRAN:
 - Xác thực mật mã bất đối xứng Ed25519 với Public Key chính thức.
 - Tương thích 100% với LUV_License_Manager.exe và LUV SDS Intelligence - Bản Hoàn Chỉnh.exe.
 - Chặn đứng 100% các mã nhập bừa / mã giả lập không tồn tại trong Cloudflare D1 Database.
+- Bảo mật tệp giấy phép đa nền tảng: Windows DPAPI (CryptProtectData / CryptUnprotectData với entropy)
+  và Base64 envelope an toàn trên Linux/Docker/Render.
+- Tự động di trú (migration fallback) từ license.json sang data/license.sec.
 - Hỗ trợ cơ chế dùng thử 48 giờ (Anti-tamper 48h Trial).
 """
 
@@ -22,14 +25,18 @@ import threading
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LICENSE_FILE = os.path.join(BASE_DIR, "license.json")
+DATA_DIR = os.path.join(BASE_DIR, "data")
+LICENSE_FILE = os.path.join(DATA_DIR, "license.sec")
+LEGACY_LICENSE_FILE = os.path.join(BASE_DIR, "license.json")
 TRIALS_FILE = os.path.join(BASE_DIR, "trials_db.json")
+
+os.makedirs(DATA_DIR, exist_ok=True)
 
 # Official Cloudflare Worker & Ed25519 Configuration
 DEFAULT_SERVER_URL = "https://luv-license-api.luv-sds.workers.dev"
@@ -37,8 +44,72 @@ PUBLIC_KEY_B64 = "hsHHVWWmquFmME9wW4d2u1Qh5NdVtu3tktRDMl437Fo="
 APP_VERSION = "1.1.0"
 CLOCK_SKEW_SECONDS = 300
 TRIAL_DURATION_SECONDS = 48 * 3600  # 48 hours = 2 days
+ENTROPY_BYTES = b"LUV-SDS-License-v1"
 
 _trial_lock = threading.Lock()
+
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    _crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    _crypt32.CryptProtectData.argtypes = [
+        ctypes.POINTER(DATA_BLOB), wintypes.LPCWSTR, ctypes.POINTER(DATA_BLOB),
+        ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(DATA_BLOB),
+    ]
+    _crypt32.CryptProtectData.restype = wintypes.BOOL
+    _crypt32.CryptUnprotectData.argtypes = [
+        ctypes.POINTER(DATA_BLOB), ctypes.POINTER(wintypes.LPWSTR), ctypes.POINTER(DATA_BLOB),
+        ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(DATA_BLOB),
+    ]
+    _crypt32.CryptUnprotectData.restype = wintypes.BOOL
+    _kernel32.LocalFree.argtypes = [wintypes.HLOCAL]
+    _kernel32.LocalFree.restype = wintypes.HLOCAL
+
+
+def _protect_data(data: bytes) -> bytes:
+    """Platform-aware data protection: DPAPI on Windows, safe passthrough envelope on Linux/Docker."""
+    if os.name != "nt":
+        return data
+    source = ctypes.create_string_buffer(data)
+    source_blob = DATA_BLOB(len(data), ctypes.cast(source, ctypes.POINTER(ctypes.c_char)))
+    output_blob = DATA_BLOB()
+    entropy = ctypes.create_string_buffer(ENTROPY_BYTES)
+    entropy_blob = DATA_BLOB(len(ENTROPY_BYTES), ctypes.cast(entropy, ctypes.POINTER(ctypes.c_char)))
+    if not _crypt32.CryptProtectData(
+        ctypes.byref(source_blob), "LUV DOC License", ctypes.byref(entropy_blob),
+        None, None, 0x1, ctypes.byref(output_blob),
+    ):
+        raise ValueError("Không thể mã hóa bảo vệ giấy phép trên máy trạm này.")
+    try:
+        return ctypes.string_at(output_blob.pbData, output_blob.cbData)
+    finally:
+        _kernel32.LocalFree(output_blob.pbData)
+
+
+def _unprotect_data(data: bytes) -> bytes:
+    """Platform-aware data unprotection: DPAPI on Windows, safe passthrough envelope on Linux/Docker."""
+    if os.name != "nt":
+        return data
+    source = ctypes.create_string_buffer(data)
+    source_blob = DATA_BLOB(len(data), ctypes.cast(source, ctypes.POINTER(ctypes.c_char)))
+    output_blob = DATA_BLOB()
+    entropy = ctypes.create_string_buffer(ENTROPY_BYTES)
+    entropy_blob = DATA_BLOB(len(ENTROPY_BYTES), ctypes.cast(entropy, ctypes.POINTER(ctypes.c_char)))
+    if not _crypt32.CryptUnprotectData(
+        ctypes.byref(source_blob), None, ctypes.byref(entropy_blob),
+        None, None, 0x1, ctypes.byref(output_blob),
+    ):
+        raise ValueError("Giấy phép cục bộ không thuộc máy này hoặc đã bị chỉnh sửa.")
+    try:
+        return ctypes.string_at(output_blob.pbData, output_blob.cbData)
+    finally:
+        _kernel32.LocalFree(output_blob.pbData)
 
 
 def _b64url_decode(value: str) -> bytes:
@@ -63,6 +134,67 @@ class LUVLicenseClient:
     """
     Client quản lý giấy phép bản quyền mật mã Cloudflare & Dùng thử 48h.
     """
+
+    @classmethod
+    def save_secure_license(cls, record: Dict[str, Any]) -> None:
+        """Save license record securely to data/license.sec using platform protection."""
+        os.makedirs(DATA_DIR, exist_ok=True)
+        raw_bytes = json.dumps(record, ensure_ascii=False, indent=2).encode("utf-8")
+        protected_bytes = _protect_data(raw_bytes)
+        b64_envelope = base64.b64encode(protected_bytes)
+
+        temp_file = LICENSE_FILE + ".tmp"
+        with open(temp_file, "wb") as f:
+            f.write(b64_envelope)
+        if os.path.exists(LICENSE_FILE):
+            os.replace(temp_file, LICENSE_FILE)
+        else:
+            os.rename(temp_file, LICENSE_FILE)
+
+    @classmethod
+    def load_secure_license(cls) -> Optional[Dict[str, Any]]:
+        """
+        Load license record from data/license.sec.
+        If data/license.sec does not exist but legacy license.json exists,
+        automatically migrate to data/license.sec.
+        """
+        # Migration fallback: if data/license.sec does not exist but license.json exists
+        if not os.path.exists(LICENSE_FILE) and os.path.exists(LEGACY_LICENSE_FILE):
+            try:
+                with open(LEGACY_LICENSE_FILE, "r", encoding="utf-8") as f:
+                    legacy_data = json.load(f)
+                if legacy_data and legacy_data.get("token"):
+                    cls.save_secure_license(legacy_data)
+            except Exception:
+                pass
+
+        if not os.path.exists(LICENSE_FILE):
+            return None
+
+        try:
+            with open(LICENSE_FILE, "rb") as f:
+                content = f.read().strip()
+            if not content:
+                return None
+
+            try:
+                decoded = base64.b64decode(content, validate=True)
+            except Exception:
+                decoded = content
+
+            try:
+                unprotected = _unprotect_data(decoded)
+            except Exception:
+                unprotected = decoded
+
+            text = unprotected.decode("utf-8")
+            if text.strip().startswith("{"):
+                return json.loads(text)
+            elif "." in text:
+                return {"token": text.strip()}
+            return None
+        except Exception:
+            return None
 
     @classmethod
     def _read_trials(cls) -> Dict[str, Any]:
@@ -122,23 +254,28 @@ class LUVLicenseClient:
 
     @classmethod
     def get_license_info(cls) -> Dict[str, Any]:
-        """Read activated license from disk and cryptographically verify signature."""
-        if not os.path.exists(LICENSE_FILE):
+        """Read activated license from data/license.sec and cryptographically verify signature."""
+        data = cls.load_secure_license()
+        if not data:
             return {
                 "is_active": False,
                 "tier": "Chưa kích hoạt",
                 "registered_to": None,
+                "customer": None,
                 "license_key": None
             }
         try:
-            with open(LICENSE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
             token = data.get("token")
             if not token or "." not in token:
-                return {"is_active": False, "tier": "Chưa kích hoạt"}
+                return {
+                    "is_active": False,
+                    "tier": "Chưa kích hoạt",
+                    "registered_to": None,
+                    "customer": None,
+                    "license_key": None
+                }
 
-            # Verify Ed25519 signature of the stored token
+            # Authentic Ed25519 signature verification against official Public Key
             payload_part, sig_part = token.split(".", 1)
             pub_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(PUBLIC_KEY_B64))
             sig_bytes = _b64url_decode(sig_part)
@@ -152,14 +289,20 @@ class LUVLicenseClient:
                 return {
                     "is_active": False,
                     "tier": "Giấy phép đã hết hạn",
+                    "registered_to": claims.get("customer") or data.get("registered_to"),
+                    "customer": claims.get("customer") or data.get("registered_to"),
                     "license_key": data.get("license_key"),
                     "expired": True
                 }
 
+            plan_name = claims.get("plan", "pro").upper()
+            customer_name = claims.get("customer") or data.get("registered_to")
+
             return {
                 "is_active": True,
-                "tier": data.get("tier") or f"Doanh Nghiệp ({claims.get('plan', 'pro').upper()})",
-                "registered_to": claims.get("customer") or data.get("registered_to"),
+                "tier": data.get("tier") or f"Doanh Nghiệp ({plan_name})",
+                "registered_to": customer_name,
+                "customer": customer_name,
                 "license_key": data.get("license_key"),
                 "expires_at": claims.get("expires_at") or data.get("expires_at"),
                 "features": claims.get("features", [])
@@ -170,6 +313,7 @@ class LUVLicenseClient:
                 "is_active": False,
                 "tier": "Chưa kích hoạt",
                 "registered_to": None,
+                "customer": None,
                 "license_key": None,
                 "error": str(e)
             }
@@ -181,7 +325,10 @@ class LUVLicenseClient:
         https://luv-license-api.luv-sds.workers.dev/v1/activate
 
         - Chặn 100% mã nhập bừa / mã giả mạo.
-        - Xác thực chữ ký Ed25519 của Cloudflare Worker.
+        - Cơ chế 2-step fallback: thử 'DOC' trước, nếu HTTP 403 product_denied thì thử 'SDS'.
+        - Header bắt buộc: User-Agent: LUV-DOC/1.1.0.
+        - Xác thực chữ ký số Ed25519 với Public Key chính thức.
+        - Lưu trữ an toàn vào data/license.sec với bảo vệ DPAPI (Windows) / base64 envelope (Linux).
         """
         if not key or not isinstance(key, str):
             raise ValueError("Vui lòng nhập Mã Bản Quyền chính thức!")
@@ -193,7 +340,7 @@ class LUVLicenseClient:
         dev_id = generate_device_hash(client_device_hint)
         dev_label = (registered_to.strip() or platform.node() or "Windows Client")[:80]
 
-        # First try product code 'DOC', fallback to 'SDS' (since owner key / keys may have DOC or SDS product entitlement)
+        # 2-step activation fallback: try 'DOC' first, on HTTP 403 'product_denied' fallback to 'SDS'
         products_to_try = ["DOC", "SDS"]
         last_error = "Không thể kích hoạt mã bản quyền."
 
@@ -214,7 +361,7 @@ class LUVLicenseClient:
                 data=json.dumps(payload).encode("utf-8"),
                 headers={
                     "Content-Type": "application/json",
-                    "User-Agent": f"LUV-{prod}/{APP_VERSION}"
+                    "User-Agent": f"LUV-DOC/{APP_VERSION}"
                 },
                 method="POST"
             )
@@ -227,19 +374,36 @@ class LUVLicenseClient:
                         break
             except urllib.error.HTTPError as exc:
                 raw = exc.read().decode("utf-8", errors="replace")
+                err_code = ""
                 try:
                     parsed = json.loads(raw)
+                    err_code = parsed.get("error", "")
                     msg = parsed.get("message") or parsed.get("error") or raw
                 except Exception:
                     msg = raw
-                last_error = msg
+
+                # If product denied on DOC, fallback to SDS
+                if prod == "DOC" and err_code == "product_denied":
+                    last_error = msg
+                    continue
+
+                if err_code == "license_denied":
+                    last_error = "Mã bản quyền không tồn tại trên hệ thống hoặc đã bị thu hồi."
+                elif err_code == "device_limit":
+                    last_error = "Mã bản quyền đã vượt quá số lượng thiết bị cho phép kích hoạt."
+                elif err_code == "invalid_request":
+                    last_error = "Mã bản quyền hoặc thông tin kích hoạt không hợp lệ."
+                else:
+                    last_error = msg
+                break
             except Exception as e:
                 last_error = f"Không thể kết nối tới máy chủ giấy phép ({str(e)})."
+                break
 
         if not token:
             raise ValueError(f"Máy chủ giấy phép từ chối kích hoạt: {last_error}")
 
-        # Cryptographically verify the Ed25519 signature
+        # Authentic Ed25519 verification
         try:
             payload_part, sig_part = token.split(".", 1)
             pub_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(PUBLIC_KEY_B64))
@@ -263,6 +427,7 @@ class LUVLicenseClient:
             "license_id": claims.get("license_id"),
             "license_key": normalized_key,
             "registered_to": customer_name,
+            "customer": customer_name,
             "tier": f"Doanh Nghiệp ({plan_name})",
             "expires_at": claims.get("expires_at", "Vĩnh viễn"),
             "offline_until": claims.get("offline_until_iso"),
@@ -273,25 +438,425 @@ class LUVLicenseClient:
             "is_active": True
         }
 
-        # Persist valid license
-        with open(LICENSE_FILE, "w", encoding="utf-8") as f:
-            json.dump(record, f, ensure_ascii=False, indent=2)
+        # Clear any previous revocation state for this device upon new successful activation
+        trials = cls._read_trials()
+        if dev_id in trials and trials[dev_id].get("revoked"):
+            trials[dev_id]["revoked"] = False
+            cls._write_trials(trials)
+
+        # Persist valid license securely to data/license.sec
+        cls.save_secure_license(record)
 
         return record
 
     @classmethod
-    def check_access(cls, device_id: str = "") -> Dict[str, Any]:
+    def purge_license(cls) -> None:
         """
-        Check if client has active permission to translate:
-        either via valid cryptographic License Key OR via 48-hour Free Trial.
+        Xóa an toàn toàn bộ các tệp giấy phép cục bộ khi bị thu hồi hoặc vi phạm tính toàn vẹn:
+        - data/license.sec
+        - data/license.sec.tmp
+        - license.json
+        - license.json.tmp
         """
-        lic = cls.get_license_info()
+        target_files = [
+            LICENSE_FILE,
+            LICENSE_FILE + ".tmp",
+            LEGACY_LICENSE_FILE,
+            LEGACY_LICENSE_FILE + ".tmp",
+        ]
+        for path in target_files:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except Exception:
+                pass
+
+    @classmethod
+    def validate_license(
+        cls,
+        client_device_hint: str = "",
+        force_online: bool = True,
+        device_id: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Xác thực giấy phép trực tuyến thời gian thực với Máy chủ Cloudflare Worker:
+        POST https://luv-license-api.luv-sds.workers.dev/v1/validate
+
+        - Gửi headers: Content-Type: application/json, User-Agent: LUV-DOC/1.1.0
+        - Payload: token, device_id, app_version: "1.1.0", product_code: claims.get("product_code", "DOC")
+        - Khi HTTP 200: Xác thực chữ ký số Ed25519 của token mới, cập nhật data/license.sec,
+          cập nhật offline_until, trả về trạng thái active.
+        - Khi HTTP 400/401/403/404 hoặc lỗi license_denied / device_not_registered:
+          gọi purge_license(), đặt status="revoked", revoked=True, is_active=False.
+        - Khi mất kết nối mạng (urllib.error.URLError): Cho phép dịch ngoại tuyến nếu _utc_now() <= offline_until;
+          chặn nếu đã hết hạn ngoại tuyến.
+        """
+        data = cls.load_secure_license()
+        if not data:
+            # Check if this device was previously marked revoked
+            clean_dev = device_id or (client_device_hint if len(client_device_hint) == 64 else generate_device_hash(client_device_hint)) if client_device_hint else generate_device_hash()
+            trials = cls._read_trials()
+            if clean_dev and trials.get(clean_dev, {}).get("revoked"):
+                return {
+                    "is_active": False,
+                    "revoked": True,
+                    "status": "revoked",
+                    "tier": "Giấy phép đã bị thu hồi",
+                    "registered_to": None,
+                    "customer": None,
+                    "license_key": None,
+                    "error": "license_denied",
+                    "message": "Giấy phép bản quyền đã bị thu hồi bởi Quản trị viên. Quyền dịch thuật bị khóa vĩnh viễn."
+                }
+            return {
+                "is_active": False,
+                "revoked": False,
+                "status": "unactivated",
+                "tier": "Chưa kích hoạt",
+                "registered_to": None,
+                "customer": None,
+                "license_key": None
+            }
+
+        token = data.get("token")
+        if not token or "." not in token:
+            cls.purge_license()
+            return {
+                "is_active": False,
+                "revoked": False,
+                "status": "unactivated",
+                "tier": "Chưa kích hoạt",
+                "registered_to": None,
+                "customer": None,
+                "license_key": None
+            }
+
+        # 1. Local Ed25519 Cryptographic Verification
+        try:
+            payload_part, sig_part = token.split(".", 1)
+            pub_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(PUBLIC_KEY_B64))
+            sig_bytes = _b64url_decode(sig_part)
+            pub_key.verify(sig_bytes, payload_part.encode("ascii"))
+            claims = json.loads(_b64url_decode(payload_part).decode("utf-8"))
+        except (InvalidSignature, Exception) as exc:
+            cls.purge_license()
+            return {
+                "is_active": False,
+                "revoked": True,
+                "status": "invalid_signature",
+                "tier": "Chữ ký không hợp lệ",
+                "registered_to": None,
+                "customer": None,
+                "license_key": None,
+                "error": "invalid_signature",
+                "message": f"Chữ ký số của giấy phép không hợp lệ: {str(exc)}"
+            }
+
+        now = _utc_now()
+        exp = int(claims.get("exp", 0))
+        if exp > 0 and exp + CLOCK_SKEW_SECONDS < now:
+            return {
+                "is_active": False,
+                "revoked": False,
+                "status": "expired",
+                "expired": True,
+                "tier": "Giấy phép đã hết hạn",
+                "registered_to": claims.get("customer") or data.get("registered_to"),
+                "customer": claims.get("customer") or data.get("registered_to"),
+                "license_key": data.get("license_key"),
+                "message": "Giấy phép bản quyền đã hết hạn sử dụng."
+            }
+
+        # Determine effective device_id
+        dev_id = ""
+        if device_id:
+            dev_id = device_id
+        elif client_device_hint:
+            if len(client_device_hint) == 64 and all(c in "0123456789abcdefABCDEF" for c in client_device_hint):
+                dev_id = client_device_hint
+            else:
+                dev_id = generate_device_hash(client_device_hint)
+        if not dev_id:
+            dev_id = data.get("device_id") or claims.get("device_id") or generate_device_hash()
+
+        # Offline until timestamp calculation helper
+        def get_offline_timestamp() -> int:
+            val = claims.get("offline_until") or data.get("offline_until")
+            if isinstance(val, (int, float)):
+                return int(val)
+            if isinstance(val, str):
+                if val.isdigit():
+                    return int(val)
+                try:
+                    iso_str = val.replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(iso_str)
+                    return int(dt.timestamp())
+                except Exception:
+                    pass
+            return exp if exp > 0 else 0
+
+        offline_ts = get_offline_timestamp()
+
+        # If online validation is requested
+        if force_online:
+            product_code = claims.get("product_code", "DOC")
+            products_to_validate = [product_code]
+            if product_code == "DOC":
+                products_to_validate.append("SDS")
+            elif product_code == "SDS":
+                products_to_validate.append("DOC")
+
+            validation_success = False
+            last_http_error = None
+            raw_err = ""
+            renewed_token = None
+            renewed_claims = None
+
+            for prod in products_to_validate:
+                payload = {
+                    "token": token,
+                    "device_id": dev_id,
+                    "app_version": APP_VERSION,
+                    "product_code": prod
+                }
+                req = urllib.request.Request(
+                    f"{DEFAULT_SERVER_URL}/v1/validate",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "User-Agent": f"LUV-DOC/{APP_VERSION}"
+                    },
+                    method="POST"
+                )
+
+                try:
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        if resp.status == 200:
+                            body = json.loads(resp.read().decode("utf-8"))
+                            renewed_token = body.get("token")
+                            if renewed_token and "." in renewed_token:
+                                # Verify signature of renewed token
+                                r_payload_part, r_sig_part = renewed_token.split(".", 1)
+                                r_pub_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(PUBLIC_KEY_B64))
+                                r_sig_bytes = _b64url_decode(r_sig_part)
+                                r_pub_key.verify(r_sig_bytes, r_payload_part.encode("ascii"))
+                                renewed_claims = json.loads(_b64url_decode(r_payload_part).decode("utf-8"))
+                                validation_success = True
+                                break
+                except urllib.error.HTTPError as exc:
+                    last_http_error = exc
+                    raw_err = exc.read().decode("utf-8", errors="replace")
+                    err_code = ""
+                    try:
+                        parsed = json.loads(raw_err)
+                        err_code = parsed.get("error", "")
+                    except Exception:
+                        pass
+                    if prod == "DOC" and err_code == "product_denied":
+                        continue
+                    break
+                except urllib.error.URLError as exc:
+                    last_http_error = exc
+                    break
+                except Exception as exc:
+                    last_http_error = exc
+                    break
+
+            if validation_success and renewed_token and renewed_claims:
+                record = dict(data)
+                record["token"] = renewed_token
+                record["status"] = "active"
+                record["is_active"] = True
+                record["offline_until"] = renewed_claims.get("offline_until_iso") or renewed_claims.get("offline_until")
+                record["expires_at"] = renewed_claims.get("expires_at") or record.get("expires_at")
+                if "lease_seq" in renewed_claims:
+                    record["lease_seq"] = renewed_claims["lease_seq"]
+                cls.save_secure_license(record)
+
+                plan_name = renewed_claims.get("plan", data.get("plan", "Enterprise")).upper()
+                customer_name = renewed_claims.get("customer") or data.get("customer") or data.get("registered_to")
+                return {
+                    "is_active": True,
+                    "revoked": False,
+                    "status": "active",
+                    "tier": data.get("tier") or f"Doanh Nghiệp ({plan_name})",
+                    "registered_to": customer_name,
+                    "customer": customer_name,
+                    "license_key": data.get("license_key"),
+                    "expires_at": renewed_claims.get("expires_at") or data.get("expires_at"),
+                    "offline_until": renewed_claims.get("offline_until_iso") or renewed_claims.get("offline_until"),
+                    "features": renewed_claims.get("features", data.get("features", [])),
+                    "lease_seq": renewed_claims.get("lease_seq")
+                }
+
+            # Handle HTTP errors from server (revoked / denied / unregistered)
+            if isinstance(last_http_error, urllib.error.HTTPError):
+                code = last_http_error.code
+                err_code = ""
+                err_msg = ""
+                try:
+                    parsed = json.loads(raw_err) if raw_err else {}
+                    err_code = parsed.get("error", "")
+                    err_msg = parsed.get("message") or parsed.get("error") or ""
+                except Exception:
+                    pass
+
+                # HTTP 400/401/403/404 or license_denied / device_not_registered
+                if code in [400, 401, 403, 404] or err_code in ["license_denied", "device_not_registered", "revoked"]:
+                    cls.purge_license()
+                    trials = cls._read_trials()
+                    if dev_id:
+                        if dev_id not in trials:
+                            trials[dev_id] = {"started_at": time.time(), "device_id": dev_id}
+                        trials[dev_id]["revoked"] = True
+                        cls._write_trials(trials)
+
+                    return {
+                        "is_active": False,
+                        "revoked": True,
+                        "status": "revoked",
+                        "tier": "Giấy phép đã bị thu hồi",
+                        "registered_to": None,
+                        "customer": None,
+                        "license_key": None,
+                        "error": err_code or "license_denied",
+                        "message": err_msg or "Giấy phép đã bị khóa hoặc thu hồi bởi Quản trị viên."
+                    }
+
+            # Handle Network Outage (URLError or connection error)
+            if isinstance(last_http_error, (urllib.error.URLError, TimeoutError, ConnectionError, OSError)):
+                now = _utc_now()
+                if offline_ts > 0 and now <= offline_ts:
+                    plan_name = claims.get("plan", data.get("plan", "Enterprise")).upper()
+                    customer_name = claims.get("customer") or data.get("customer") or data.get("registered_to")
+                    return {
+                        "is_active": True,
+                        "revoked": False,
+                        "status": "offline_active",
+                        "offline_mode": True,
+                        "tier": data.get("tier") or f"Doanh Nghiệp ({plan_name})",
+                        "registered_to": customer_name,
+                        "customer": customer_name,
+                        "license_key": data.get("license_key"),
+                        "expires_at": claims.get("expires_at") or data.get("expires_at"),
+                        "offline_until": claims.get("offline_until_iso") or data.get("offline_until"),
+                        "features": claims.get("features", data.get("features", [])),
+                        "message": "Đang hoạt động ở chế độ ngoại tuyến (trong thời hạn cho phép)."
+                    }
+                else:
+                    return {
+                        "is_active": False,
+                        "revoked": False,
+                        "status": "offline_expired",
+                        "offline_expired": True,
+                        "tier": "Hết hạn sử dụng ngoại tuyến",
+                        "registered_to": claims.get("customer") or data.get("registered_to"),
+                        "customer": claims.get("customer") or data.get("registered_to"),
+                        "license_key": data.get("license_key"),
+                        "message": "Thời hạn sử dụng ngoại tuyến đã kết thúc. Vui lòng kết nối Internet để gia hạn giấy phép."
+                    }
+
+        # If force_online is False, check offline_until
+        now = _utc_now()
+        if offline_ts > 0 and now <= offline_ts:
+            plan_name = claims.get("plan", data.get("plan", "Enterprise")).upper()
+            customer_name = claims.get("customer") or data.get("customer") or data.get("registered_to")
+            return {
+                "is_active": True,
+                "revoked": False,
+                "status": "offline_active",
+                "offline_mode": True,
+                "tier": data.get("tier") or f"Doanh Nghiệp ({plan_name})",
+                "registered_to": customer_name,
+                "customer": customer_name,
+                "license_key": data.get("license_key"),
+                "expires_at": claims.get("expires_at") or data.get("expires_at"),
+                "offline_until": claims.get("offline_until_iso") or data.get("offline_until"),
+                "features": claims.get("features", data.get("features", [])),
+            }
+        else:
+            return {
+                "is_active": False,
+                "revoked": False,
+                "status": "offline_expired",
+                "offline_expired": True,
+                "tier": "Hết hạn sử dụng ngoại tuyến",
+                "registered_to": claims.get("customer") or data.get("registered_to"),
+                "customer": claims.get("customer") or data.get("registered_to"),
+                "license_key": data.get("license_key"),
+                "message": "Thời hạn sử dụng ngoại tuyến đã kết thúc. Vui lòng kết nối Internet để gia hạn giấy phép."
+            }
+
+    @classmethod
+    def check_access(
+        cls,
+        device_id: str = "",
+        validated_license: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Kiểm tra quyền dịch thuật của máy trạm:
+        - Nếu giấy phép bị thu hồi (revoked): Chặn vĩnh viễn, KHÔNG cho phép rơi về dùng thử.
+        - Nếu có giấy phép hợp lệ: Trả về access_type="licensed".
+        - Nếu hết hạn ngoại tuyến: Chặn truy cập.
+        - Nếu chưa kích hoạt: Kiểm tra thời hạn dùng thử 48 giờ (trial).
+        """
+        clean_dev = device_id.strip() if device_id else generate_device_hash()
+        trials = cls._read_trials()
+        if trials.get(clean_dev, {}).get("revoked"):
+            return {
+                "has_access": False,
+                "revoked": True,
+                "access_type": "revoked",
+                "tier": "Giấy phép đã bị thu hồi",
+                "message": "Giấy phép bản quyền đã bị thu hồi bởi Quản trị viên. Quyền dịch thuật bị khóa vĩnh viễn.",
+                "registered_to": None,
+                "customer": None,
+                "license_key": None,
+                "remaining_seconds": 0,
+                "remaining_formatted": "Đã bị thu hồi"
+            }
+
+        lic = validated_license if validated_license is not None else cls.get_license_info()
+
+        # If revoked: permanent block, do NOT fall back to trial
+        if lic.get("revoked") or lic.get("status") == "revoked":
+            return {
+                "has_access": False,
+                "revoked": True,
+                "access_type": "revoked",
+                "tier": "Giấy phép đã bị thu hồi",
+                "message": lic.get("message") or "Giấy phép bản quyền đã bị thu hồi bởi Quản trị viên. Quyền dịch thuật bị khóa vĩnh viễn.",
+                "registered_to": None,
+                "customer": None,
+                "license_key": None,
+                "remaining_seconds": 0,
+                "remaining_formatted": "Đã bị thu hồi"
+            }
+
+        # If offline grace expired
+        if lic.get("offline_expired") or lic.get("status") == "offline_expired":
+            return {
+                "has_access": False,
+                "revoked": False,
+                "offline_expired": True,
+                "access_type": "offline_expired",
+                "tier": "Hết hạn sử dụng ngoại tuyến",
+                "message": lic.get("message") or "Thời hạn sử dụng ngoại tuyến đã kết thúc. Vui lòng kết nối Internet để gia hạn giấy phép.",
+                "registered_to": lic.get("registered_to"),
+                "customer": lic.get("customer"),
+                "license_key": lic.get("license_key"),
+                "remaining_seconds": 0,
+                "remaining_formatted": "Hết hạn ngoại tuyến"
+            }
+
         if lic.get("is_active"):
             return {
                 "has_access": True,
+                "revoked": False,
                 "access_type": "licensed",
                 "tier": lic.get("tier", "Enterprise"),
                 "registered_to": lic.get("registered_to", "Doanh nghiệp"),
+                "customer": lic.get("customer", "Doanh nghiệp"),
                 "license_key": lic.get("license_key"),
                 "remaining_seconds": None,
                 "remaining_formatted": "Bản Quyền Chính Thức"
@@ -300,12 +865,15 @@ class LUVLicenseClient:
         trial = cls.get_trial_status(device_id)
         return {
             "has_access": trial["is_trial_active"],
+            "revoked": False,
             "access_type": "trial",
             "tier": "Dùng thử 48 Giờ",
             "registered_to": "Khách dùng thử",
+            "customer": "Khách dùng thử",
             "license_key": None,
             "remaining_seconds": trial["remaining_seconds"],
             "remaining_formatted": trial["remaining_formatted"],
             "hours_left": trial["hours_left"],
             "minutes_left": trial["minutes_left"]
         }
+

@@ -12,5 +12,3 @@ services:
         value: 8080
       - key: PYTHONUNBUFFERED
         value: "1"
-      - key: TITAN_LICENSE_VERIFY_URL
-        value: "https://messages-aka-solo-lauderdale.trycloudflare.com/api/license/verify"
