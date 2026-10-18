@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*$py.class
+data/temp/*
+data/output/*
+!data/temp/.gitkeep
+!data/output/.gitkeep
+license.json
+trials_db.json
+.pytest_cache/
+.vscode/
+.idea/
+.env

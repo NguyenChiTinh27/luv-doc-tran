@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LUV-DOC-TRAN — Dịch Thuật Song Ngữ Kỹ Thuật Siêu Cute</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌸</text></svg>">
+    <!-- Google Fonts: Quicksand & Nunito for Kawaii clean typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Top Kawaii App Bar -->
+    <header class="kawaii-header">
+        <div class="header-container">
+            <div class="brand-group">
+                <div class="brand-mascot-icon" id="header-mascot">🐱</div>
+                <div>
+                    <div class="brand-title">
+                        <span class="brand-luv">LUV</span><span class="brand-sep">-</span><span class="brand-doc">DOC</span><span class="brand-sep">-</span><span class="brand-tran">TRAN</span>
+                        <span class="kawaii-sparkle">✨</span>
+                    </div>
+                    <div class="brand-sub">Trình Dịch Thuật Song Ngữ Kỹ Thuật Siêu Cute &amp; Chuẩn Xác</div>
+                </div>
+            </div>
+
+            <div class="header-actions">
+                <!-- 48-Hour Trial Pill -->
+                <div id="trial-pill" class="trial-badge" title="Thời gian trải nghiệm miễn phí 48 giờ">
+                    <span class="trial-icon" id="trial-icon">🌸</span>
+                    <span id="trial-timer-text">Đang kiểm tra dùng thử...</span>
+                </div>
+
+                <!-- License Status Pill -->
+                <button type="button" id="btn-open-license" class="license-btn-header" onclick="window.LuvApp.openLicenseModal()">
+                    <span class="key-icon">🔑</span>
+                    <span id="license-header-label">Kích Hoạt Bản Quyền</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main App Container -->
+    <main class="main-wrapper">
+        <!-- Mascot Greeting Hero -->
+        <section class="mascot-hero-section">
+            <div class="mascot-avatar-large" id="hero-mascot-avatar">🐱</div>
+            <div class="mascot-speech-bubble">
+                <h3 class="speech-title">Chào bạn nha! Mình là Docy 🌸</h3>
+                <p class="speech-desc">
+                    Hãy kéo thả tệp <strong>Word (.docx, .doc)</strong>, <strong>PDF</strong> hoặc <strong>Excel (.xlsx, .xls)</strong> vào đây nhen.
+                    Mình sẽ dịch song ngữ xen kẽ chuẩn nhận diện (#002060 nghiêng, bảo toàn 100% bảng biểu, mã số CAS và công thức tính toán)!
+                </p>
+            </div>
+        </section>
+
+        <!-- Translation Studio Card -->
+        <div class="kawaii-card studio-card">
+            <!-- 1. Dropzone Area -->
+            <div id="dropzone" class="cute-dropzone" onclick="document.getElementById('file-input').click()">
+                <input type="file" id="file-input" style="display:none;" accept=".docx,.doc,.pdf,.xlsx,.xls" onchange="window.LuvApp.handleFileSelect(this.files)" />
+                <div class="dropzone-content">
+                    <div class="dropzone-icon-bounce">📁</div>
+                    <div class="dropzone-title">Kéo &amp; Thả tệp tin của bạn vào đây</div>
+                    <div class="dropzone-sub">hoặc <span class="dropzone-link">bấm vào đây để chọn tệp</span> từ máy tính</div>
+                    <div class="dropzone-tags">
+                        <span class="file-tag tag-word">Word (.docx, .doc)</span>
+                        <span class="file-tag tag-pdf">PDF (.pdf)</span>
+                        <span class="file-tag tag-excel">Excel (.xlsx, .xls)</span>
+                    </div>
+                </div>
+
+                <!-- Selected File Display -->
+                <div id="selected-file-card" class="selected-file-pill" style="display:none;" onclick="event.stopPropagation()">
+                    <span id="file-type-icon" class="file-type-icon">📄</span>
+                    <div class="file-details">
+                        <div id="selected-file-name" class="file-name-text">filename.docx</div>
+                        <div id="selected-file-size" class="file-size-text">0 KB</div>
+                    </div>
+                    <button type="button" class="btn-remove-file" onclick="window.LuvApp.clearSelectedFile()" title="Chọn tệp khác">✕</button>
+                </div>
+            </div>
+
+            <!-- 2. Settings Bar -->
+            <div class="settings-grid">
+                <div class="setting-item">
+                    <label class="setting-label">🌐 Ngôn ngữ nguồn (Gốc):</label>
+                    <select id="sel-source-lang" class="kawaii-select">
+                        <option value="auto" selected>✨ Tự động nhận diện</option>
+                        <option value="en">🇬🇧 Tiếng Anh (English)</option>
+                        <option value="zh">🇨🇳 Tiếng Trung (中文)</option>
+                        <option value="ja">🇯🇵 Tiếng Nhật (日本語)</option>
+                        <option value="ko">🇰🇷 Tiếng Hàn (한국어)</option>
+                    </select>
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">🎯 Ngôn ngữ đích:</label>
+                    <select id="sel-target-lang" class="kawaii-select" disabled>
+                        <option value="vi" selected>🇻🇳 Tiếng Việt (Song ngữ xen kẽ #002060)</option>
+                    </select>
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">⚡ Động cơ dịch thuật:</label>
+                    <select id="sel-engine" class="kawaii-select">
+                        <option value="deepseek" selected>🤖 DeepSeek AI (Chuyên sâu Hóa chất &amp; Kỹ thuật)</option>
+                        <option value="fast">⚡ Siêu Tốc (Dịch Tức Thì Không Cần API Key)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Optional DeepSeek API Key accordion -->
+            <div class="api-key-accordion">
+                <button type="button" class="btn-accordion-toggle" onclick="window.LuvApp.toggleApiKeySection()">
+                    <span>⚙️ Cài đặt DeepSeek API Key cá nhân (Tùy chọn)</span>
+                    <span id="accordion-arrow">▼</span>
+                </button>
+                <div id="api-key-panel" class="api-key-panel" style="display:none;">
+                    <input type="password" id="input-api-key" class="kawaii-input" placeholder="Nhập sk-xxxxxxxx (Nếu để trống hệ thống sẽ tự động dùng động cơ mặc định)" />
+                </div>
+            </div>
+
+            <!-- 3. Primary Action Button -->
+            <div class="action-btn-wrapper">
+                <button type="button" id="btn-start-translate" class="btn-kawaii-primary" onclick="window.LuvApp.startTranslation()">
+                    <span class="btn-sparkle">✨</span>
+                    <span id="btn-translate-text">BẮT ĐẦU DỊCH SONG NGỮ NGAY</span>
+                    <span class="btn-sparkle">✨</span>
+                </button>
+            </div>
+
+            <!-- Progress Bar Card -->
+            <div id="progress-box" class="progress-box" style="display:none;">
+                <div class="progress-header">
+                    <span class="progress-mascot-spin">🐱</span>
+                    <span id="progress-status-text">Đang chuẩn bị dịch tài liệu...</span>
+                    <span id="progress-percent-text">15%</span>
+                </div>
+                <div class="kawaii-progress-track">
+                    <div id="progress-bar-fill" class="kawaii-progress-fill" style="width:15%;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================================== -->
+        <!-- REVIEW SPLIT-VIEW STUDIO (SO SÁNH SONG SONG 2 CỘT) -->
+        <!-- ========================================================== -->
+        <section id="split-view-studio" class="kawaii-card split-studio-section" style="display:none;">
+            <!-- Studio Header HUD -->
+            <div class="studio-hud">
+                <div class="hud-left">
+                    <span class="hud-icon">🔍</span>
+                    <span class="hud-title">Review Split-View Studio</span>
+                    <span id="hud-doc-name" class="hud-badge-name">tai_lieu.docx</span>
+                </div>
+
+                <div class="hud-center">
+                    <div class="zoom-controls">
+                        <button type="button" class="hud-btn-mini" onclick="window.LuvApp.zoomChange(-10)" title="Thu nhỏ">-</button>
+                        <span id="zoom-level-label" class="zoom-label">100%</span>
+                        <button type="button" class="hud-btn-mini" onclick="window.LuvApp.zoomChange(10)" title="Phóng to">+</button>
+                    </div>
+
+                    <button type="button" id="btn-sync-scroll" class="hud-btn active" onclick="window.LuvApp.toggleSyncScroll()" title="Cuộn đồng bộ 2 bên">
+                        🔄 Cuộn đồng bộ: BẬT
+                    </button>
+                </div>
+
+                <div class="hud-right">
+                    <button type="button" id="btn-inline-edit" class="hud-btn" onclick="window.LuvApp.toggleInlineEdit()" title="Chỉnh sửa văn bản trực tiếp">
+                        ✏️ Sửa Nhanh
+                    </button>
+                    <button type="button" class="hud-btn" onclick="window.print()" title="In bản dịch">
+                        🖨️ In
+                    </button>
+                </div>
+            </div>
+
+            <!-- 2-Column Side-by-Side Review Screen -->
+            <div class="split-columns-wrapper">
+                <!-- Column 1: Original File -->
+                <div class="split-col split-col-original">
+                    <div class="col-header">
+                        <span class="col-title-badge badge-orig">📄 VĂN BẢN GỐC (ORIGINAL)</span>
+                        <span id="orig-page-indicator" class="col-meta-text">Đang nạp...</span>
+                    </div>
+                    <div id="pane-original" class="split-pane">
+                        <div class="pane-loading">Đang nạp văn bản gốc...</div>
+                    </div>
+                </div>
+
+                <!-- Column 2: Translated Bilingual File -->
+                <div class="split-col split-col-translated">
+                    <div class="col-header">
+                        <span class="col-title-badge badge-tran">✨ SONG NGỮ XEN KẼ (INTERLINEAR BILINGUAL)</span>
+                        <span id="tran-page-indicator" class="col-meta-text">#002060 Nghiêng</span>
+                    </div>
+                    <div id="pane-translated" class="split-pane">
+                        <div class="pane-loading">Đang chuẩn bị bản dịch...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ====================================================== -->
+            <!-- OUTPUT DOWNLOAD BUTTONS (WORD PRIORITY & CUTE PDF REMINDER) -->
+            <!-- ====================================================== -->
+            <div class="download-section-card">
+                <div class="download-header-note">
+                    <span class="note-icon">💡</span>
+                    <span><strong>Mẹo tối ưu:</strong> Tải tệp Word (.docx) được xử lý tức thì chỉ 3 giây và cho phép chỉnh sửa toàn diện trên mọi thiết bị!</span>
+                </div>
+
+                <div class="download-buttons-grid">
+                    <!-- 1. WORD BUTTON (PRIORITIZED, HIGHLIGHTED, GLOWING) -->
+                    <button type="button" id="btn-dl-word" class="btn-download btn-dl-word-priority" onclick="window.LuvApp.downloadWord()">
+                        <div class="btn-dl-content">
+                            <span class="btn-dl-icon">⚡</span>
+                            <div class="btn-dl-text-group">
+                                <span class="btn-dl-title">TẢI FILE WORD (.DOCX)</span>
+                                <span class="btn-dl-badge">KHUYÊN DÙNG — TỨC THÌ &amp; DỄ SỬA</span>
+                            </div>
+                        </div>
+                    </button>
+
+                    <!-- 2. PDF BUTTON (WITH PROGRESS MODAL REMINDER) -->
+                    <button type="button" id="btn-dl-pdf" class="btn-download btn-dl-pdf-cute" onclick="window.LuvApp.handlePdfDownload()">
+                        <div class="btn-dl-content">
+                            <span class="btn-dl-icon">📄</span>
+                            <div class="btn-dl-text-group">
+                                <span class="btn-dl-title">TẢI FILE PDF VECTOR (.PDF)</span>
+                                <span class="btn-dl-sub">Kết xuất độ nét cao (2-3 phút)</span>
+                            </div>
+                        </div>
+                    </button>
+
+                    <!-- 3. ZIP BUNDLE BUTTON -->
+                    <button type="button" id="btn-dl-zip" class="btn-download btn-dl-zip" onclick="window.LuvApp.downloadZip()">
+                        <div class="btn-dl-content">
+                            <span class="btn-dl-icon">📦</span>
+                            <div class="btn-dl-text-group">
+                                <span class="btn-dl-title">TẢI TRỌN BỘ (.ZIP)</span>
+                                <span class="btn-dl-sub">Cả Word &amp; PDF</span>
+                            </div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- ========================================================== -->
+    <!-- CUTE MODAL: PDF GENERATION IN PROGRESS (USER REQUIREMENT) -->
+    <!-- ========================================================== -->
+    <div id="modal-pdf-progress" class="kawaii-modal-backdrop" style="display:none;">
+        <div class="kawaii-modal-card modal-pdf-card">
+            <div class="modal-mascot-animation">
+                <div class="mascot-bounce-large">🐱</div>
+                <div class="stars-orbit">⭐ 🌸 ✨ 💖</div>
+            </div>
+
+            <h3 class="modal-title">Đang Kết Xuất PDF Vector Độ Nét Cao...</h3>
+            
+            <div class="modal-notice-banner">
+                <span class="notice-icon">⏳</span>
+                <p>
+                    Vui lòng đợi khoảng <strong>2 - 3 phút</strong> để hệ thống dàn trang và kết xuất PDF vector chuẩn in ấn nhen!
+                    <br><span style="color:#0284c7; font-weight:600;">(Khuyên dùng: Bạn có thể tải file Word (.docx) ngay lập tức để tiết kiệm thời gian)</span>
+                </p>
+            </div>
+
+            <!-- Animated Step by Step Pipeline -->
+            <div class="pdf-steps-list">
+                <div class="pdf-step step-done">
+                    <span class="step-icon">✓</span>
+                    <span class="step-text">Dịch thuật song ngữ liên dòng hoàn tất</span>
+                </div>
+                <div class="pdf-step step-done">
+                    <span class="step-icon">✓</span>
+                    <span class="step-text">Tối ưu hóa bảng biểu, thụt lề và mã hóa chất CAS</span>
+                </div>
+                <div class="pdf-step step-active" id="pdf-step-rendering">
+                    <span class="step-icon-spin">⟳</span>
+                    <span class="step-text">Đang kết xuất tệp PDF vector với font Times New Roman song ngữ...</span>
+                </div>
+                <div class="pdf-step" id="pdf-step-ready">
+                    <span class="step-icon">○</span>
+                    <span class="step-text">Đóng gói sẵn sàng tải về</span>
+                </div>
+            </div>
+
+            <div class="modal-action-row">
+                <button type="button" class="btn-modal-word-shortcut" onclick="window.LuvApp.closePdfModal(); window.LuvApp.downloadWord();">
+                    ⚡ Tải File Word Ngay (Không Cần Đợi)
+                </button>
+                <button type="button" class="btn-modal-close" onclick="window.LuvApp.closePdfModal()">
+                    Đóng
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================================== -->
+    <!-- LICENSE ACTIVATION MODAL -->
+    <!-- ========================================================== -->
+    <div id="modal-license" class="kawaii-modal-backdrop" style="display:none;">
+        <div class="kawaii-modal-card">
+            <div class="modal-header-row">
+                <div class="modal-header-title">
+                    <span class="key-icon-large">🔑</span>
+                    <div>
+                        <h3>Kích Hoạt Bản Quyền LUV-DOC-TRAN</h3>
+                        <div class="modal-sub">Mở khóa vĩnh viễn tính năng dịch song ngữ không giới hạn</div>
+                    </div>
+                </div>
+                <button type="button" class="btn-close-modal" onclick="window.LuvApp.closeLicenseModal()">✕</button>
+            </div>
+
+            <form id="license-form" onsubmit="event.preventDefault(); window.LuvApp.handleActivateLicense();">
+                <div class="form-group">
+                    <label class="form-label" for="act-reg-name">Tên Doanh nghiệp / Cá nhân đăng ký:</label>
+                    <input type="text" id="act-reg-name" class="kawaii-input" placeholder="Ví dụ: Công ty TNHH Hóa Chất ABC" required />
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="act-key">Mã Bản Quyền (License Key):</label>
+                    <input type="text" id="act-key" class="kawaii-input input-key-code" placeholder="LUV-PRO-XXXX-XXXX-XXXX" required />
+                    <div class="input-hint">Hệ thống chấp nhận mã được cấp từ <strong>LUV_License_Manager.exe</strong> hoặc trang Quản trị trực tuyến.</div>
+                </div>
+
+                <div id="license-msg-box" class="license-msg-box" style="display:none;"></div>
+
+                <div class="form-actions">
+                    <button type="submit" id="btn-submit-activate" class="btn-kawaii-primary btn-full">
+                        ✨ KÍCH HOẠT BẢN QUYỀN NGAY ✨
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="kawaii-footer">
+        <div class="footer-content">
+            <div>🌸 <strong>LUV-DOC-TRAN</strong> • Bản quyền thương mại bảo hộ 2026 • Made with ❤️ for Engineers &amp; Translators</div>
+            <div class="footer-links">
+                <span>Hỗ trợ: Word (.docx, .doc), PDF, Excel (.xlsx, .xls)</span>
+                <span>•</span>
+                <span>Chuẩn màu #002060 Times New Roman</span>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
