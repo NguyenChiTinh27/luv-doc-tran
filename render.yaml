@@ -1,10 +1,11 @@
 services:
   - type: web
     name: luv-doc-tran
-    env: docker
-    plan: starter
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
     region: singapore
-    dockerfilePath: Dockerfile
+    autoDeploy: true
     healthCheckPath: /api/status
     envVars:
       - key: PORT
