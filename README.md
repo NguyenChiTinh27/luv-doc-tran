@@ -4,6 +4,10 @@
 
 ---
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/NguyenChiTinh27/luv-doc-tran)
+
+---
+
 ## ✨ Điểm Nổi Bật & Tính Năng Thương Mại
 
 1. **Giao Diện Pastel Kawaii Thân Thiện**:
