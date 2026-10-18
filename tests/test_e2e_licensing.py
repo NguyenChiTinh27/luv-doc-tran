@@ -104,6 +104,11 @@ class BaseLicensingTestCase(unittest.TestCase):
             with open(self.license_sec, "rb") as f:
                 self.backup_sec = f.read()
 
+        self.backup_trials = None
+        if os.path.exists(self.trials_db):
+            with open(self.trials_db, "rb") as f:
+                self.backup_trials = f.read()
+
         # Clean current state before each test
         self._remove_test_artifacts()
 
@@ -116,10 +121,13 @@ class BaseLicensingTestCase(unittest.TestCase):
         if self.backup_sec is not None:
             with open(self.license_sec, "wb") as f:
                 f.write(self.backup_sec)
+        if self.backup_trials is not None:
+            with open(self.trials_db, "wb") as f:
+                f.write(self.backup_trials)
         super().tearDown()
 
     def _remove_test_artifacts(self):
-        for path in [self.license_json, self.license_sec]:
+        for path in [self.license_json, self.license_sec, self.trials_db]:
             if os.path.exists(path):
                 try:
                     os.remove(path)
@@ -1167,14 +1175,19 @@ class TestTier4RealWorldScenarios(BaseLicensingTestCase):
             info = LUVLicenseClient.get_license_info()
             self.assertTrue(info["is_active"])
 
-            time.sleep(0.3)
             # Step 4: Admin revokes the key
             rev_res = _call_admin_api("POST", f"/v1/admin/licenses/{lic_id}/revoke")
             self.assertTrue(rev_res.get("ok"))
 
-            time.sleep(0.3)
-            # Step 5: Call validate_license() online - must detect revocation and auto-purge
-            val_revoked = LUVLicenseClient.validate_license(force_online=True)
+            # Step 5: Call validate_license() online - must detect revocation and auto-purge (allowing for D1 edge propagation)
+            val_revoked = None
+            for _ in range(6):
+                time.sleep(0.5)
+                val_revoked = LUVLicenseClient.validate_license(force_online=True)
+                if val_revoked.get("revoked"):
+                    break
+
+            self.assertIsNotNone(val_revoked)
             self.assertFalse(val_revoked["is_active"])
             self.assertTrue(val_revoked.get("revoked"))
             self.assertEqual(val_revoked["status"], "revoked")

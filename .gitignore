@@ -7,6 +7,7 @@ data/output/*
 !data/output/.gitkeep
 license.json
 trials_db.json
+data/license.sec*
 .pytest_cache/
 .vscode/
 .idea/

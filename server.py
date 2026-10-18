@@ -1,7 +1,7 @@
 """
 LUV-DOC-TRAN — Standalone Commercial Bilingual Translation Web Application
 ─────────────────────────────────────────────────────────────────────────
-Chuyên gia Dịch thuật Song ngữ Kỹ thuật & An toàn Hóa chất (DOC-TRAN VIP PRO)
+LUV-DOC-TRAN Studio Pro - Nền Tảng Dịch Thuật Đa Ngữ & Đa Định Dạng Doanh Nghiệp
 Deployable on Render, Docker, Linux, and Windows.
 """
 
@@ -150,10 +150,17 @@ def get_trial_status(device_id: str = ""):
 
 
 @app.get("/api/license/status")
-def get_license_status():
+def get_license_status(device_id: str = ""):
     """Get stored license activation state with real-time Cloudflare Worker validation."""
     try:
-        return LUVLicenseClient.validate_license()
+        status = LUVLicenseClient.validate_license(device_id=device_id)
+        if status.get("revoked"):
+            return {
+                "is_active": False,
+                "revoked": True,
+                "message": "Giấy phép đã bị thu hồi trên máy chủ D1. Vui lòng liên hệ quản trị viên."
+            }
+        return status
     except Exception as e:
         return {
             "is_active": False,
@@ -286,12 +293,21 @@ async def process_translation(
             content={
                 "success": False,
                 "revoked": True,
-                "message": "Giấy phép bản quyền đã bị thu hồi bởi Quản trị viên. Quyền dịch thuật bị khóa vĩnh viễn."
+                "message": "Giấy phép đã bị thu hồi trên máy chủ D1. Vui lòng liên hệ quản trị viên."
             }
         )
 
     # 2. Access Control Check (48h trial or License Key)
     access = LUVLicenseClient.check_access(device_id=device_id, validated_license=lic_status)
+    if access.get("revoked"):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "success": False,
+                "revoked": True,
+                "message": "Giấy phép đã bị thu hồi trên máy chủ D1. Vui lòng liên hệ quản trị viên."
+            }
+        )
     if not access["has_access"]:
         return JSONResponse(
             status_code=403,
@@ -344,7 +360,7 @@ async def process_translation(
 
         # Case B: Word (.docx, .doc) or PDF (.pdf)
         else:
-            # We request Word (.docx) as primary priority
+            # Word (.docx) is the exclusive output format for both Word and PDF inputs
             res = InterlinearTranslator.process_interlinear_suite(
                 input_path=saved_path,
                 output_dir=OUTPUT_DIR,
@@ -354,27 +370,22 @@ async def process_translation(
                 output_mode=output_mode,
                 provider=provider,
                 engine_mode=engine_mode,
-                output_format="all" if ext == ".pdf" else "docx",
+                output_format="docx",
                 api_key=effective_api_key
             )
 
             # Ensure URLs
             if isinstance(res, dict):
                 docx_file = os.path.basename(res.get("docx_path", "")) if res.get("docx_path") else None
-                pdf_file = os.path.basename(res.get("pdf_path", "")) if res.get("pdf_path") else None
-                zip_file = os.path.basename(res.get("zip_path", "")) if res.get("zip_path") else None
 
                 if docx_file:
                     res["download_docx_url"] = f"/api/download/{docx_file}"
+                    res["download_url"] = f"/api/download/{docx_file}"
                     res["preview_output_filename"] = docx_file
-                if pdf_file:
-                    res["download_pdf_url"] = f"/api/download/{pdf_file}"
-                if zip_file:
-                    res["download_zip_url"] = f"/api/download/{zip_file}"
 
                 res["elapsed_seconds"] = round(time.time() - start_time, 2)
                 res["primary_format"] = "docx"
-                res["word_priority_note"] = "⚡ File Word (.docx) đã sẵn sàng tải về ngay lập tức!"
+                res["word_priority_note"] = "Word (.docx) đã sẵn sàng để tải về và chỉnh sửa tức thì."
 
             return res
 

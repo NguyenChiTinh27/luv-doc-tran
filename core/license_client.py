@@ -134,6 +134,10 @@ class LUVLicenseClient:
     """
     Client quản lý giấy phép bản quyền mật mã Cloudflare & Dùng thử 48h.
     """
+    PUBLIC_KEY_B64 = PUBLIC_KEY_B64
+    _is_revoked: bool = False
+    _cached_claims: Optional[Dict[str, Any]] = None
+    _license_lock: threading.Lock = threading.Lock()
 
     @classmethod
     def save_secure_license(cls, record: Dict[str, Any]) -> None:
@@ -444,6 +448,10 @@ class LUVLicenseClient:
             trials[dev_id]["revoked"] = False
             cls._write_trials(trials)
 
+        with cls._license_lock:
+            cls._is_revoked = False
+            cls._cached_claims = claims
+
         # Persist valid license securely to data/license.sec
         cls.save_secure_license(record)
 
@@ -457,19 +465,39 @@ class LUVLicenseClient:
         - data/license.sec.tmp
         - license.json
         - license.json.tmp
+        Clears cached in-memory claims and sets _is_revoked = True. Idempotent and thread-safe.
         """
-        target_files = [
-            LICENSE_FILE,
-            LICENSE_FILE + ".tmp",
-            LEGACY_LICENSE_FILE,
-            LEGACY_LICENSE_FILE + ".tmp",
-        ]
-        for path in target_files:
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except Exception:
-                pass
+        with cls._license_lock:
+            cls._is_revoked = True
+            cls._cached_claims = None
+            target_files = [
+                LICENSE_FILE,
+                LICENSE_FILE + ".tmp",
+                LEGACY_LICENSE_FILE,
+                LEGACY_LICENSE_FILE + ".tmp",
+            ]
+            for path in target_files:
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except Exception:
+                    pass
+
+    @classmethod
+    def validate_license_online(
+        cls,
+        device_id: str = "",
+        force_online: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Direct API method for real-time online license validation against Cloudflare Worker.
+        - Reads current stored token from data/license.sec. If missing, returns {"is_active": False, "valid": False}.
+        - Calls POST https://luv-license-api.luv-sds.workers.dev/v1/validate with JSON payload.
+        - Verifies Ed25519 signature against PUBLIC_KEY_B64.
+        - On HTTP 400/401/403/404 or license_denied: calls purge_license(), sets revoked=True, valid=False.
+        - On network outage: checks offline tolerance window claims['offline_until'].
+        """
+        return cls.validate_license(device_id=device_id, force_online=force_online)
 
     @classmethod
     def validate_license(
@@ -499,6 +527,7 @@ class LUVLicenseClient:
             if clean_dev and trials.get(clean_dev, {}).get("revoked"):
                 return {
                     "is_active": False,
+                    "valid": False,
                     "revoked": True,
                     "status": "revoked",
                     "tier": "Giấy phép đã bị thu hồi",
@@ -510,6 +539,7 @@ class LUVLicenseClient:
                 }
             return {
                 "is_active": False,
+                "valid": False,
                 "revoked": False,
                 "status": "unactivated",
                 "tier": "Chưa kích hoạt",
@@ -523,6 +553,7 @@ class LUVLicenseClient:
             cls.purge_license()
             return {
                 "is_active": False,
+                "valid": False,
                 "revoked": False,
                 "status": "unactivated",
                 "tier": "Chưa kích hoạt",
@@ -542,6 +573,7 @@ class LUVLicenseClient:
             cls.purge_license()
             return {
                 "is_active": False,
+                "valid": False,
                 "revoked": True,
                 "status": "invalid_signature",
                 "tier": "Chữ ký không hợp lệ",
@@ -557,6 +589,7 @@ class LUVLicenseClient:
         if exp > 0 and exp + CLOCK_SKEW_SECONDS < now:
             return {
                 "is_active": False,
+                "valid": False,
                 "revoked": False,
                 "status": "expired",
                 "expired": True,
@@ -570,14 +603,17 @@ class LUVLicenseClient:
         # Determine effective device_id
         dev_id = ""
         if device_id:
-            dev_id = device_id
+            if len(device_id) == 64 and all(c in "0123456789abcdefABCDEF" for c in device_id):
+                dev_id = device_id
+            else:
+                dev_id = claims.get("device_id") or data.get("device_id") or generate_device_hash(device_id)
         elif client_device_hint:
             if len(client_device_hint) == 64 and all(c in "0123456789abcdefABCDEF" for c in client_device_hint):
                 dev_id = client_device_hint
             else:
-                dev_id = generate_device_hash(client_device_hint)
+                dev_id = claims.get("device_id") or data.get("device_id") or generate_device_hash(client_device_hint)
         if not dev_id:
-            dev_id = data.get("device_id") or claims.get("device_id") or generate_device_hash()
+            dev_id = claims.get("device_id") or data.get("device_id") or generate_device_hash()
 
         # Offline until timestamp calculation helper
         def get_offline_timestamp() -> int:
@@ -697,9 +733,9 @@ class LUVLicenseClient:
                 try:
                     parsed = json.loads(raw_err) if raw_err else {}
                     err_code = parsed.get("error", "")
-                    err_msg = parsed.get("message") or parsed.get("error") or ""
+                    err_msg = parsed.get("message") or "Giấy phép bản quyền đã bị thu hồi bởi Quản trị viên."
                 except Exception:
-                    pass
+                    err_msg = "Giấy phép bản quyền đã bị thu hồi bởi Quản trị viên."
 
                 # HTTP 400/401/403/404 or license_denied / device_not_registered
                 if code in [400, 401, 403, 404] or err_code in ["license_denied", "device_not_registered", "revoked"]:
@@ -713,6 +749,7 @@ class LUVLicenseClient:
 
                     return {
                         "is_active": False,
+                        "valid": False,
                         "revoked": True,
                         "status": "revoked",
                         "tier": "Giấy phép đã bị thu hồi",
@@ -720,7 +757,7 @@ class LUVLicenseClient:
                         "customer": None,
                         "license_key": None,
                         "error": err_code or "license_denied",
-                        "message": err_msg or "Giấy phép đã bị khóa hoặc thu hồi bởi Quản trị viên."
+                        "message": err_msg or "Giấy phép bản quyền đã bị thu hồi bởi Quản trị viên."
                     }
 
             # Handle Network Outage (URLError or connection error)
@@ -800,9 +837,10 @@ class LUVLicenseClient:
         - Nếu hết hạn ngoại tuyến: Chặn truy cập.
         - Nếu chưa kích hoạt: Kiểm tra thời hạn dùng thử 48 giờ (trial).
         """
-        clean_dev = device_id.strip() if device_id else generate_device_hash()
+        clean_dev = device_id.strip() if device_id else ""
         trials = cls._read_trials()
-        if trials.get(clean_dev, {}).get("revoked"):
+        effective_dev = clean_dev or generate_device_hash()
+        if trials.get(effective_dev, {}).get("revoked"):
             return {
                 "has_access": False,
                 "revoked": True,
@@ -816,7 +854,13 @@ class LUVLicenseClient:
                 "remaining_formatted": "Đã bị thu hồi"
             }
 
-        lic = validated_license if validated_license is not None else cls.get_license_info()
+        if validated_license is not None:
+            lic = validated_license
+        else:
+            try:
+                lic = cls.validate_license(device_id=clean_dev, force_online=True)
+            except Exception:
+                lic = cls.get_license_info()
 
         # If revoked: permanent block, do NOT fall back to trial
         if lic.get("revoked") or lic.get("status") == "revoked":

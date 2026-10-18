@@ -15,7 +15,7 @@ class TestE2EFrontend(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Clean previous state
-        for fname in ["license.json", "trials_db.json"]:
+        for fname in ["license.json", "trials_db.json", os.path.join("data", "license.sec"), os.path.join("data", "license.sec.tmp")]:
             fpath = os.path.join(BASE_DIR, fname)
             if os.path.exists(fpath):
                 try:
@@ -42,7 +42,7 @@ class TestE2EFrontend(unittest.TestCase):
             cls.server_proc.wait(timeout=5)
 
     def test_complete_frontend_flow(self):
-        """Test full frontend UX: TitanPDF minimalist branding, multi-file queue, per-file instant download, Split-view, and PDF modal."""
+        """Test full frontend UX: Dark Obsidian Studio branding, multi-file queue, per-file instant Word download, Split-view, and zero PDF modals."""
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(viewport={"width": 1440, "height": 950})
@@ -85,17 +85,17 @@ class TestE2EFrontend(unittest.TestCase):
             header_badge = page.inner_text("#trial-pill")
             self.assertIn("Bản Quyền", header_badge)
 
-            # 5. Create 2 sample files for Multi-file Upload testing
-            sample_docx1 = os.path.join(BASE_DIR, "data", "temp", "e2e_sample_msds.docx")
-            sample_docx2 = os.path.join(BASE_DIR, "data", "temp", "e2e_sample_tds.docx")
+            # 5. Create 2 sample corporate files for Multi-file Upload testing (free of chemical keywords)
+            sample_docx1 = os.path.join(BASE_DIR, "data", "temp", "e2e_sample_report.docx")
+            sample_docx2 = os.path.join(BASE_DIR, "data", "temp", "e2e_sample_contract.docx")
             import docx
-            for path, title, chemical in [
-                (sample_docx1, "Material Safety Data Sheet (MSDS)", "Acetone (CAS: 67-64-1)"),
-                (sample_docx2, "Technical Data Sheet (TDS)", "Polyethylene Glycol (CAS: 25322-68-3)")
+            for path, title, body in [
+                (sample_docx1, "Báo Cáo Kế Hoạch Kinh Doanh & Tài Chính Doanh Nghiệp", "Tổng quan chiến lược phát triển thị trường và chỉ tiêu tăng trưởng năm 2026."),
+                (sample_docx2, "Hợp Đồng Dịch Vụ Tư Vấn Công Nghệ Thông Tin", "Các điều khoản bảo mật, phạm vi công việc và lộ trình bàn giao giải pháp.")
             ]:
                 d = docx.Document()
                 d.add_heading(title, level=1)
-                d.add_paragraph(f"Active Chemical Component: {chemical}")
+                d.add_paragraph(body)
                 d.save(path)
 
             # Multi-file Upload via file input
@@ -118,35 +118,25 @@ class TestE2EFrontend(unittest.TestCase):
             page.screenshot(path=ss_path_queue)
             print(f"[E2E] Saved Queue screenshot: {ss_path_queue}")
 
-            # 6. Test Split-View Studio
-            page.wait_for_selector("#split-view-studio", state="visible", timeout=30000)
+            # 6. Open Split-View Studio by clicking Compare on the first row
+            compare_btn = page.query_selector(".btn-row-compare")
+            if compare_btn:
+                compare_btn.click()
+            time.sleep(1)
+
+            page.wait_for_selector("#split-view-studio", state="visible", timeout=10000)
 
             # Check HUD doc name
             hud_name = page.inner_text("#hud-doc-name")
             self.assertTrue(len(hud_name) > 0)
 
             # Verify Word Priority button is prominent in Split-View
-            word_btn_text = page.inner_text("#btn-studio-dl-word")
+            word_btn_text = page.inner_text("#studio-dl-title")
             self.assertIn("TẢI FILE WORD (.DOCX)", word_btn_text)
-            self.assertIn("Khuyên dùng", word_btn_text)
 
-            # 7. Test PDF Download Button & Reminder Modal
-            page.click("#btn-studio-dl-pdf")
-            page.wait_for_selector("#modal-pdf-progress", state="visible")
-
-            # Verify 2-3 minute notice in modal
-            modal_notice = page.inner_text(".modal-alert-box")
-            self.assertIn("2 - 3 phút", modal_notice)
-            self.assertIn("Khuyên dùng", modal_notice)
-
-            # Take screenshot of PDF Loading Modal
-            ss_path2 = os.path.join(ARTIFACTS_DIR, "luv_doctran_e2e_pdf_modal.png")
-            page.screenshot(path=ss_path2)
-            print(f"[E2E] Saved PDF progress modal screenshot: {ss_path2}")
-
-            # Close modal via close button
-            page.click(".btn-modal-cancel")
-            time.sleep(0.5)
+            # 7. Verify PDF Export is completely eliminated (R2)
+            self.assertIsNone(page.query_selector("#modal-pdf-progress"), "PDF progress modal must be eliminated")
+            self.assertIsNone(page.query_selector("#btn-studio-dl-pdf"), "PDF download button must be eliminated")
 
             # Take final full page screenshot of Split-View Studio
             ss_path3 = os.path.join(ARTIFACTS_DIR, "luv_doctran_e2e_split_view.png")
