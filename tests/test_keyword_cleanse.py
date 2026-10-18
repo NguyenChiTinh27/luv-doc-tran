@@ -188,6 +188,14 @@ class TestKeywordCleanse(unittest.TestCase):
         self.assertIn('id="act-key"', content)
         self.assertNotIn('id="act-reg-name"', content)
 
+    def test_12_no_ed25519_cloudflare_subheading(self):
+        """Assert zero occurrences of 'Xác thực mật mã Ed25519' in static/index.html."""
+        index_path = os.path.join(STATIC_DIR, "index.html")
+        with open(index_path, "r", encoding="utf-8") as fp:
+            content = fp.read()
+        self.assertNotIn("Xác thực mật mã Ed25519", content)
+        self.assertNotIn("modal-subheading", content)
+
 
 if __name__ == "__main__":
     unittest.main()

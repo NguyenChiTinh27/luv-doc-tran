@@ -607,7 +607,7 @@ window.LuvApp = {
 
         if (submitBtn) {
             submitBtn.disabled = true;
-            submitBtn.innerHTML = `<span class="spinner-mini"></span> Đang xác thực mật mã Ed25519 với Cloudflare...`;
+            submitBtn.innerHTML = `<span class="spinner-mini"></span> Đang xác thực Key kích hoạt...`;
         }
 
         try {
