@@ -15,6 +15,7 @@ Hệ thống xác thực giấy phép bản quyền LUV-DOC-TRAN:
 from __future__ import annotations
 
 import os
+import re
 import sys
 import json
 import time
@@ -224,36 +225,18 @@ class LUVLicenseClient:
 
     @classmethod
     def get_trial_status(cls, device_id: str = "") -> Dict[str, Any]:
-        """Check or register 48-hour free trial for device."""
+        """Cơ chế dùng thử đã bỏ hoàn toàn: Bắt buộc nhập Key kích hoạt từ ban đầu."""
         clean_dev = device_id.strip() if device_id else generate_device_hash()
-        trials = cls._read_trials()
-        now = time.time()
-
-        if clean_dev not in trials:
-            trials[clean_dev] = {
-                "started_at": now,
-                "started_at_str": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                "device_id": clean_dev
-            }
-            cls._write_trials(trials)
-
-        start_time = trials[clean_dev].get("started_at", now)
-        elapsed = now - start_time
-        remaining = max(0, TRIAL_DURATION_SECONDS - elapsed)
-        is_valid = remaining > 0
-
-        hours = int(remaining // 3600)
-        minutes = int((remaining % 3600) // 60)
-        seconds = int(remaining % 60)
-
         return {
             "device_id": clean_dev,
-            "is_trial_active": is_valid,
-            "remaining_seconds": int(remaining),
-            "remaining_formatted": f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m {seconds}s",
-            "hours_left": hours,
-            "minutes_left": minutes,
-            "total_trial_hours": 48
+            "is_trial_active": False,
+            "trial_disabled": True,
+            "remaining_seconds": 0,
+            "remaining_formatted": "Yêu Cầu Key Kích Hoạt",
+            "hours_left": 0,
+            "minutes_left": 0,
+            "total_trial_hours": 0,
+            "message": "Cơ chế dùng thử không còn áp dụng. Vui lòng nhập Key kích hoạt để sử dụng hệ thống."
         }
 
     @classmethod
@@ -300,13 +283,16 @@ class LUVLicenseClient:
                 }
 
             plan_name = claims.get("plan", "pro").upper()
-            customer_name = claims.get("customer") or data.get("registered_to")
+            customer_name = claims.get("customer") or data.get("registered_to") or "Người Dùng Bản Quyền"
+            clean_reg = re.sub(r'(?i)doanh\s*nghiệp', 'Người Dùng', customer_name) if "doanh nghiệp" in customer_name.lower() else customer_name
+            raw_tier = data.get("tier") or f"Key Kích Hoạt ({plan_name})"
+            clean_tier = re.sub(r'(?i)doanh\s*nghiệp', 'Key Kích Hoạt', raw_tier) if "doanh nghiệp" in raw_tier.lower() else raw_tier
 
             return {
                 "is_active": True,
-                "tier": data.get("tier") or f"Doanh Nghiệp ({plan_name})",
-                "registered_to": customer_name,
-                "customer": customer_name,
+                "tier": clean_tier,
+                "registered_to": clean_reg,
+                "customer": clean_reg,
                 "license_key": data.get("license_key"),
                 "expires_at": claims.get("expires_at") or data.get("expires_at"),
                 "features": claims.get("features", [])
@@ -323,7 +309,7 @@ class LUVLicenseClient:
             }
 
     @classmethod
-    def activate_key(cls, key: str, registered_to: str = "Doanh nghiệp LUV", client_device_hint: str = "") -> Dict[str, Any]:
+    def activate_key(cls, key: str, registered_to: str = "Người Dùng Bản Quyền", client_device_hint: str = "") -> Dict[str, Any]:
         """
         Kích hoạt mã giấy phép bằng cách kết nối trực tiếp với Máy chủ Cloudflare Worker:
         https://luv-license-api.luv-sds.workers.dev/v1/activate
@@ -394,7 +380,7 @@ class LUVLicenseClient:
                 if err_code == "license_denied":
                     last_error = "Mã bản quyền không tồn tại trên hệ thống hoặc đã bị thu hồi."
                 elif err_code == "device_limit":
-                    last_error = "Mã bản quyền đã vượt quá số lượng thiết bị cho phép kích hoạt."
+                    last_error = "Mã Key đã vượt quá số lượng thiết bị cho phép. Thiết bị này bị từ chối truy cập."
                 elif err_code == "invalid_request":
                     last_error = "Mã bản quyền hoặc thông tin kích hoạt không hợp lệ."
                 else:
@@ -430,9 +416,9 @@ class LUVLicenseClient:
             "status": "active",
             "license_id": claims.get("license_id"),
             "license_key": normalized_key,
-            "registered_to": customer_name,
-            "customer": customer_name,
-            "tier": f"Doanh Nghiệp ({plan_name})",
+            "registered_to": re.sub(r'(?i)doanh\s*nghiệp', 'Người Dùng', customer_name) if "doanh nghiệp" in customer_name.lower() else customer_name,
+            "customer": re.sub(r'(?i)doanh\s*nghiệp', 'Người Dùng', customer_name) if "doanh nghiệp" in customer_name.lower() else customer_name,
+            "tier": f"Key Kích Hoạt ({plan_name})",
             "expires_at": claims.get("expires_at", "Vĩnh viễn"),
             "offline_until": claims.get("offline_until_iso"),
             "features": claims.get("features", []),
@@ -711,13 +697,16 @@ class LUVLicenseClient:
 
                 plan_name = renewed_claims.get("plan", data.get("plan", "Enterprise")).upper()
                 customer_name = renewed_claims.get("customer") or data.get("customer") or data.get("registered_to")
+                raw_tier = data.get("tier") or f"Key Kích Hoạt ({plan_name})"
+                clean_tier = re.sub(r'(?i)doanh\s*nghiệp', 'Key Kích Hoạt', raw_tier) if "doanh nghiệp" in raw_tier.lower() else raw_tier
+                cust_clean = re.sub(r'(?i)doanh\s*nghiệp', 'Người Dùng', customer_name) if "doanh nghiệp" in customer_name.lower() else customer_name
                 return {
                     "is_active": True,
                     "revoked": False,
                     "status": "active",
-                    "tier": data.get("tier") or f"Doanh Nghiệp ({plan_name})",
-                    "registered_to": customer_name,
-                    "customer": customer_name,
+                    "tier": clean_tier,
+                    "registered_to": cust_clean,
+                    "customer": cust_clean,
                     "license_key": data.get("license_key"),
                     "expires_at": renewed_claims.get("expires_at") or data.get("expires_at"),
                     "offline_until": renewed_claims.get("offline_until_iso") or renewed_claims.get("offline_until"),
@@ -766,14 +755,17 @@ class LUVLicenseClient:
                 if offline_ts > 0 and now <= offline_ts:
                     plan_name = claims.get("plan", data.get("plan", "Enterprise")).upper()
                     customer_name = claims.get("customer") or data.get("customer") or data.get("registered_to")
+                    raw_tier = data.get("tier") or f"Key Kích Hoạt ({plan_name})"
+                    clean_tier = re.sub(r'(?i)doanh\s*nghiệp', 'Key Kích Hoạt', raw_tier) if "doanh nghiệp" in raw_tier.lower() else raw_tier
+                    cust_clean = re.sub(r'(?i)doanh\s*nghiệp', 'Người Dùng', customer_name) if "doanh nghiệp" in customer_name.lower() else customer_name
                     return {
                         "is_active": True,
                         "revoked": False,
                         "status": "offline_active",
                         "offline_mode": True,
-                        "tier": data.get("tier") or f"Doanh Nghiệp ({plan_name})",
-                        "registered_to": customer_name,
-                        "customer": customer_name,
+                        "tier": clean_tier,
+                        "registered_to": cust_clean,
+                        "customer": cust_clean,
                         "license_key": data.get("license_key"),
                         "expires_at": claims.get("expires_at") or data.get("expires_at"),
                         "offline_until": claims.get("offline_until_iso") or data.get("offline_until"),
@@ -798,14 +790,17 @@ class LUVLicenseClient:
         if offline_ts > 0 and now <= offline_ts:
             plan_name = claims.get("plan", data.get("plan", "Enterprise")).upper()
             customer_name = claims.get("customer") or data.get("customer") or data.get("registered_to")
+            raw_tier = data.get("tier") or f"Key Kích Hoạt ({plan_name})"
+            clean_tier = re.sub(r'(?i)doanh\s*nghiệp', 'Key Kích Hoạt', raw_tier) if "doanh nghiệp" in raw_tier.lower() else raw_tier
+            cust_clean = re.sub(r'(?i)doanh\s*nghiệp', 'Người Dùng', customer_name) if "doanh nghiệp" in customer_name.lower() else customer_name
             return {
                 "is_active": True,
                 "revoked": False,
                 "status": "offline_active",
                 "offline_mode": True,
-                "tier": data.get("tier") or f"Doanh Nghiệp ({plan_name})",
-                "registered_to": customer_name,
-                "customer": customer_name,
+                "tier": clean_tier,
+                "registered_to": cust_clean,
+                "customer": cust_clean,
                 "license_key": data.get("license_key"),
                 "expires_at": claims.get("expires_at") or data.get("expires_at"),
                 "offline_until": claims.get("offline_until_iso") or data.get("offline_until"),
@@ -832,10 +827,11 @@ class LUVLicenseClient:
     ) -> Dict[str, Any]:
         """
         Kiểm tra quyền dịch thuật của máy trạm:
-        - Nếu giấy phép bị thu hồi (revoked): Chặn vĩnh viễn, KHÔNG cho phép rơi về dùng thử.
-        - Nếu có giấy phép hợp lệ: Trả về access_type="licensed".
+        - Bắt buộc phải có Key kích hoạt hợp lệ từ ban đầu (Không dùng thử).
+        - Nếu Key bị thu hồi (revoked): Chặn vĩnh viễn.
+        - Nếu có Key hợp lệ: Trả về access_type="licensed".
         - Nếu hết hạn ngoại tuyến: Chặn truy cập.
-        - Nếu chưa kích hoạt: Kiểm tra thời hạn dùng thử 48 giờ (trial).
+        - Nếu chưa kích hoạt: Chặn dịch thuật và yêu cầu nhập Key kích hoạt.
         """
         clean_dev = device_id.strip() if device_id else ""
         trials = cls._read_trials()
@@ -845,13 +841,13 @@ class LUVLicenseClient:
                 "has_access": False,
                 "revoked": True,
                 "access_type": "revoked",
-                "tier": "Giấy phép đã bị thu hồi",
-                "message": "Giấy phép bản quyền đã bị thu hồi bởi Quản trị viên. Quyền dịch thuật bị khóa vĩnh viễn.",
+                "tier": "Key Đã Bị Thu Hồi",
+                "message": "Key kích hoạt đã bị thu hồi bởi Quản trị viên. Quyền dịch thuật bị khóa vĩnh viễn.",
                 "registered_to": None,
                 "customer": None,
                 "license_key": None,
                 "remaining_seconds": 0,
-                "remaining_formatted": "Đã bị thu hồi"
+                "remaining_formatted": "Key Đã Bị Thu Hồi"
             }
 
         if validated_license is not None:
@@ -862,19 +858,19 @@ class LUVLicenseClient:
             except Exception:
                 lic = cls.get_license_info()
 
-        # If revoked: permanent block, do NOT fall back to trial
+        # If revoked: permanent block, do NOT fall back
         if lic.get("revoked") or lic.get("status") == "revoked":
             return {
                 "has_access": False,
                 "revoked": True,
                 "access_type": "revoked",
-                "tier": "Giấy phép đã bị thu hồi",
-                "message": lic.get("message") or "Giấy phép bản quyền đã bị thu hồi bởi Quản trị viên. Quyền dịch thuật bị khóa vĩnh viễn.",
+                "tier": "Key Đã Bị Thu Hồi",
+                "message": lic.get("message") or "Key kích hoạt đã bị thu hồi bởi Quản trị viên. Quyền dịch thuật bị khóa vĩnh viễn.",
                 "registered_to": None,
                 "customer": None,
                 "license_key": None,
                 "remaining_seconds": 0,
-                "remaining_formatted": "Đã bị thu hồi"
+                "remaining_formatted": "Key Đã Bị Thu Hồi"
             }
 
         # If offline grace expired
@@ -894,30 +890,32 @@ class LUVLicenseClient:
             }
 
         if lic.get("is_active"):
+            raw_tier = lic.get("tier") or "Key Kích Hoạt (PRO)"
+            clean_tier = re.sub(r'(?i)doanh\s*nghiệp', 'Key Kích Hoạt', raw_tier) if "doanh nghiệp" in raw_tier.lower() else raw_tier
+            reg_to = lic.get("registered_to") or "Người Dùng Bản Quyền"
+            clean_reg = re.sub(r'(?i)doanh\s*nghiệp', 'Người Dùng', reg_to) if "doanh nghiệp" in reg_to.lower() else reg_to
             return {
                 "has_access": True,
                 "revoked": False,
                 "access_type": "licensed",
-                "tier": lic.get("tier", "Enterprise"),
-                "registered_to": lic.get("registered_to", "Doanh nghiệp"),
-                "customer": lic.get("customer", "Doanh nghiệp"),
+                "tier": clean_tier,
+                "registered_to": clean_reg,
+                "customer": clean_reg,
                 "license_key": lic.get("license_key"),
                 "remaining_seconds": None,
-                "remaining_formatted": "Bản Quyền Chính Thức"
+                "remaining_formatted": "Key Kích Hoạt: Hợp Lệ"
             }
 
-        trial = cls.get_trial_status(device_id)
         return {
-            "has_access": trial["is_trial_active"],
+            "has_access": False,
             "revoked": False,
-            "access_type": "trial",
-            "tier": "Dùng thử 48 Giờ",
-            "registered_to": "Khách dùng thử",
-            "customer": "Khách dùng thử",
+            "access_type": "unactivated",
+            "tier": "Chưa Kích Hoạt Key",
+            "message": "Hệ thống yêu cầu nhập Key kích hoạt để bắt đầu sử dụng. Vui lòng kích hoạt bằng Key của bạn.",
+            "registered_to": None,
+            "customer": None,
             "license_key": None,
-            "remaining_seconds": trial["remaining_seconds"],
-            "remaining_formatted": trial["remaining_formatted"],
-            "hours_left": trial["hours_left"],
-            "minutes_left": trial["minutes_left"]
+            "remaining_seconds": 0,
+            "remaining_formatted": "Chưa Kích Hoạt"
         }
 

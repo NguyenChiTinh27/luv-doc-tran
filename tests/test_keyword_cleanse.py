@@ -132,7 +132,7 @@ class TestKeywordCleanse(unittest.TestCase):
             self.fail("\n".join(msg_lines))
 
     def test_06_brand_identity_repositioning(self):
-        """Verify frontend contains universal enterprise translation branding."""
+        """Verify frontend contains universal translation branding."""
         index_path = os.path.join(STATIC_DIR, "index.html")
         if not os.path.exists(index_path):
             self.skipTest("index.html does not exist yet")
@@ -141,6 +141,52 @@ class TestKeywordCleanse(unittest.TestCase):
 
         # Must contain brand name LUV-DOC-TRAN
         self.assertIn("LUV-DOC-TRAN", content, "Branding 'LUV-DOC-TRAN' must be present")
+
+    def test_07_no_doanh_nghiep_keywords(self):
+        """Assert zero occurrences of 'doanh nghiệp' / 'Doanh nghiệp' across frontend HTML/JS assets."""
+        pattern = re.compile(r"doanh\s*nghiệp", re.IGNORECASE)
+        violations = scan_files_for_pattern(pattern)
+        if violations:
+            msg_lines = [f"Found {len(violations)} 'doanh nghiệp' violation(s):"]
+            for path, line_no, matched, line_text in violations:
+                msg_lines.append(f"  {path}:{line_no} [{matched}] -> {line_text[:100]}")
+            self.fail("\n".join(msg_lines))
+
+    def test_08_no_deepseek_keywords(self):
+        """Assert zero occurrences of 'deepseek' / 'DeepSeek' in user-facing index.html and app.js."""
+        pattern = re.compile(r"deepseek", re.IGNORECASE)
+        violations = scan_files_for_pattern(pattern)
+        if violations:
+            msg_lines = [f"Found {len(violations)} 'deepseek' violation(s):"]
+            for path, line_no, matched, line_text in violations:
+                msg_lines.append(f"  {path}:{line_no} [{matched}] -> {line_text[:100]}")
+            self.fail("\n".join(msg_lines))
+
+    def test_09_no_ban_dung_or_free_trial(self):
+        """Assert zero occurrences of 'bản dùng' or 'dùng thử' in static/index.html."""
+        pattern = re.compile(r"(bản\s*dùng|dùng\s*thử)", re.IGNORECASE)
+        index_path = os.path.join(STATIC_DIR, "index.html")
+        violations = []
+        with open(index_path, "r", encoding="utf-8") as fp:
+            for line_no, line in enumerate(fp, 1):
+                if pattern.search(line):
+                    violations.append((line_no, line.strip()))
+        self.assertEqual(len(violations), 0, f"Found trial/ban dung text in index.html: {violations}")
+
+    def test_10_uses_key_kich_hoat(self):
+        """Assert 'Key Kích Hoạt' is prominently used on UI."""
+        index_path = os.path.join(STATIC_DIR, "index.html")
+        with open(index_path, "r", encoding="utf-8") as fp:
+            content = fp.read()
+        self.assertIn("Key Kích Hoạt", content)
+
+    def test_11_only_key_input_no_name_field(self):
+        """Assert modal only requires Key input without requiring user name."""
+        index_path = os.path.join(STATIC_DIR, "index.html")
+        with open(index_path, "r", encoding="utf-8") as fp:
+            content = fp.read()
+        self.assertIn('id="act-key"', content)
+        self.assertNotIn('id="act-reg-name"', content)
 
 
 if __name__ == "__main__":

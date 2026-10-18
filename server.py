@@ -1,7 +1,7 @@
 """
 LUV-DOC-TRAN — Standalone Commercial Bilingual Translation Web Application
 ─────────────────────────────────────────────────────────────────────────
-LUV-DOC-TRAN Studio Pro - Nền Tảng Dịch Thuật Đa Ngữ & Đa Định Dạng Doanh Nghiệp
+LUV-DOC-TRAN Studio Pro - Nền Tảng Dịch Thuật Đa Ngữ & Đa Định Dạng Cao Cấp
 Deployable on Render, Docker, Linux, and Windows.
 """
 
@@ -174,11 +174,11 @@ def get_license_status(device_id: str = ""):
 
 
 @app.post("/api/license/activate")
-def activate_license(key: str = Form(...), registered_to: str = Form("Doanh nghiệp LUV")):
+def activate_license(key: str = Form(...), registered_to: str = Form("Người Dùng Bản Quyền")):
     """Activate license key on this instance."""
     try:
         record = LUVLicenseClient.activate_key(key, registered_to)
-        return {"success": True, "message": "Kích hoạt bản quyền thành công!", "data": record}
+        return {"success": True, "message": "Key kích hoạt đã được xác thực thành công!", "data": record}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -274,17 +274,19 @@ async def process_translation(
     source_lang: str = Form("auto"),
     target_lang: str = Form("vi"),
     output_mode: str = Form("bilingual"),
-    provider: str = Form("deepseek"),
+    provider: str = Form("neural"),
     engine_mode: str = Form("auto"),
     api_key: Optional[str] = Form(None),
     device_id: str = Form("")
 ):
     """
     Main Bilingual Interlinear Translation Engine:
-    - Enforces 48-hour free trial / Active License check.
+    - Bắt buộc Key Kích Hoạt hợp lệ (Active License Key).
     - Prioritizes Word (.docx) generation for instant delivery.
     - Supports Word (.docx, .doc), PDF (auto-converted to docx), and Excel (.xlsx, .xls).
     """
+    actual_provider = "deepseek" if provider in ["neural", "deepseek"] else provider
+
     # 1. Real-time license validation & revocation check
     lic_status = LUVLicenseClient.validate_license(client_device_hint=device_id, device_id=device_id)
     if lic_status.get("revoked"):
@@ -293,11 +295,11 @@ async def process_translation(
             content={
                 "success": False,
                 "revoked": True,
-                "message": "Giấy phép đã bị thu hồi trên máy chủ D1. Vui lòng liên hệ quản trị viên."
+                "message": "Key kích hoạt đã bị thu hồi trên máy chủ D1. Vui lòng liên hệ quản trị viên."
             }
         )
 
-    # 2. Access Control Check (48h trial or License Key)
+    # 2. Access Control Check (Mandatory License Key)
     access = LUVLicenseClient.check_access(device_id=device_id, validated_license=lic_status)
     if access.get("revoked"):
         return JSONResponse(
@@ -305,7 +307,7 @@ async def process_translation(
             content={
                 "success": False,
                 "revoked": True,
-                "message": "Giấy phép đã bị thu hồi trên máy chủ D1. Vui lòng liên hệ quản trị viên."
+                "message": "Key kích hoạt đã bị thu hồi trên máy chủ D1. Vui lòng liên hệ quản trị viên."
             }
         )
     if not access["has_access"]:
@@ -313,8 +315,8 @@ async def process_translation(
             status_code=403,
             content={
                 "success": False,
-                "trial_expired": True,
-                "message": access.get("message") or "Thời hạn dùng thử 48 giờ miễn phí đã kết thúc. Vui lòng kích hoạt Mã Bản Quyền chính thức để tiếp tục sử dụng."
+                "license_required": True,
+                "message": access.get("message") or "Hệ thống yêu cầu nhập Key kích hoạt để bắt đầu dịch tài liệu."
             }
         )
 

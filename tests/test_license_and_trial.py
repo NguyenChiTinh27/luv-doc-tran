@@ -73,12 +73,17 @@ class TestLicenseAndTrial(unittest.TestCase):
                     pass
 
     def test_trial_initialization_and_countdown(self):
-        """Verify 48-hour trial is properly initiated and formatted."""
+        """Verify trial is eliminated and mandatory key is enforced from the start."""
         status = LUVLicenseClient.get_trial_status(self.test_device)
-        self.assertTrue(status["is_trial_active"])
-        self.assertGreater(status["remaining_seconds"], 0)
-        self.assertLessEqual(status["remaining_seconds"], TRIAL_DURATION_SECONDS)
-        self.assertIn("h", status["remaining_formatted"])
+        self.assertFalse(status["is_trial_active"])
+        self.assertTrue(status.get("trial_disabled"))
+        self.assertEqual(status["remaining_seconds"], 0)
+
+        # check_access must report unactivated and block access
+        access = LUVLicenseClient.check_access(self.test_device)
+        self.assertFalse(access["has_access"])
+        self.assertEqual(access["access_type"], "unactivated")
+        self.assertIn("Key", access["message"])
 
     def test_invalid_and_random_key_rejected_by_cloudflare(self):
         """Verify fake, malformed or random keys are completely rejected."""

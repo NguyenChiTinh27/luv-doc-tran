@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LUV-DOC-TRAN Studio — Nền Tảng Dịch Thuật Đa Ngữ & Đa Định Dạng Doanh Nghiệp</title>
+    <title>LUV-DOC-TRAN Studio — Nền Tảng Dịch Thuật Đa Ngữ & Đa Định Dạng Cao Cấp</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2306b6d4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/><polyline points='14 2 14 8 20 8'/><line x1='16' y1='13' x2='8' y2='13'/><line x1='16' y1='17' x2='8' y2='17'/></svg>">
     <!-- Modern Sans Typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -26,24 +26,23 @@
                         <span class="brand-accent">LUV</span><span class="brand-dash">-</span><span>DOC-TRAN</span>
                         <span class="brand-version-badge">STUDIO PRO</span>
                     </div>
-                    <div class="brand-sub">Nền Tảng Dịch Thuật Đa Ngữ &amp; Đa Định Dạng Doanh Nghiệp</div>
+                    <div class="brand-sub">Nền Tảng Dịch Thuật Đa Ngữ &amp; Đa Định Dạng Cao Cấp</div>
                 </div>
             </div>
 
             <div class="header-actions">
                 <!-- AI Engine Health Pill -->
-                <div class="sys-health-pill" title="Hệ thống DeepSeek AI tích hợp ngầm định bảo mật">
+                <div class="sys-health-pill" title="Hệ thống AI Neural Engine tích hợp bảo mật">
                     <span class="sys-dot"></span>
-                    <span class="sys-text">DeepSeek AI Engine</span>
+                    <span class="sys-text">AI Neural Engine</span>
                 </div>
 
-                <!-- Trial / License Status Pill -->
-                <div id="trial-pill" class="badge-pill trial-badge" title="Trạng thái giấy phép sử dụng">
+                <!-- Key Status Pill -->
+                <div id="trial-pill" class="badge-pill key-badge key-unactivated" title="Trạng thái Key kích hoạt" onclick="window.LuvApp.openLicenseModal()">
                     <svg class="pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10"/>
-                        <polyline points="12 6 12 12 16 14"/>
+                        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
                     </svg>
-                    <span id="trial-timer-text">Đang kết nối Cloudflare...</span>
+                    <span id="trial-timer-text">Đang kết nối...</span>
                 </div>
 
                 <!-- License Modal Button -->
@@ -51,7 +50,7 @@
                     <svg class="pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
                     </svg>
-                    <span id="license-header-label">Bản Quyền Doanh Nghiệp</span>
+                    <span id="license-header-label">Key Kích Hoạt</span>
                 </button>
             </div>
         </div>
@@ -95,6 +94,10 @@
                         </svg>
                     </div>
                     <div class="dropzone-title">Kéo &amp; thả tài liệu vào đây hoặc <span class="dropzone-link">chọn từ thiết bị</span></div>
+                    <div id="dropzone-key-warning" class="dropzone-key-warning" style="display:none;">
+                        <svg class="pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                        <span>Yêu Cầu Nhập Key Kích Hoạt • Vui lòng nhập Key kích hoạt để bắt đầu tải tệp và dịch thuật</span>
+                    </div>
                     <div class="dropzone-desc">Hỗ trợ tải lên nhiều tệp cùng lúc. Hệ thống tự động dịch và xuất file Word (.docx) hoặc Excel (.xlsx) tức thì.</div>
                     
                     <div class="dropzone-format-tags">
@@ -158,7 +161,7 @@
                     <label class="config-label">Động cơ dịch thuật:</label>
                     <div class="select-wrapper">
                         <select id="sel-engine" class="pro-select">
-                            <option value="deepseek" selected>DeepSeek AI Enterprise (Chuyên sâu Kỹ thuật &amp; Doanh nghiệp)</option>
+                            <option value="neural" selected>AI Neural Engine (Mô hình Ngôn ngữ Chuyên sâu)</option>
                             <option value="fast">Google Fast Engine (Dự phòng tốc độ cao)</option>
                         </select>
                     </div>
@@ -325,7 +328,7 @@
                     </svg>
                 </div>
                 <div>
-                    <h3 class="modal-heading">Kích Hoạt Bản Quyền LUV-DOC-TRAN</h3>
+                    <h3 class="modal-heading">Nhập Key Kích Hoạt LUV-DOC-TRAN</h3>
                     <div class="modal-subheading">Xác thực mật mã Ed25519 trực tiếp với Máy chủ Cloudflare Worker</div>
                 </div>
                 <button type="button" class="btn-modal-x" onclick="window.LuvApp.closeLicenseModal()">✕</button>
@@ -333,14 +336,9 @@
 
             <form id="license-form" onsubmit="event.preventDefault(); window.LuvApp.handleActivateLicense();">
                 <div class="form-group">
-                    <label class="form-label" for="act-reg-name">Tên Doanh nghiệp / Tổ chức đăng ký:</label>
-                    <input type="text" id="act-reg-name" class="pro-input" placeholder="Ví dụ: Tập đoàn Công nghệ & Thương mại Alpha" required />
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label" for="act-key">Mã Bản Quyền (License Key):</label>
-                    <input type="text" id="act-key" class="pro-input font-mono" placeholder="LUV-XXXXX-XXXXX-XXXXX-XXXXX" required />
-                    <div class="form-hint">Mã bản quyền chính thức được cấp bởi Quản trị viên hệ thống qua máy chủ Cloudflare D1.</div>
+                    <label class="form-label" for="act-key">Mã Key Kích Hoạt (License Key):</label>
+                    <input type="text" id="act-key" class="pro-input font-mono" placeholder="LUV-XXXXX-XXXXX-XXXXX-XXXXX" required autofocus />
+                    <div class="form-hint">Dán chính xác mã Key được cấp bởi Quản trị viên hệ thống để mở khóa tính năng.</div>
                 </div>
 
                 <div id="license-msg-box" class="license-alert-box" style="display:none;"></div>
@@ -348,7 +346,7 @@
                 <div class="form-submit-row">
                     <button type="submit" id="btn-submit-activate" class="btn-pro-primary btn-block">
                         <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                        XÁC NHẬN KÍCH HOẠT BẢN QUYỀN
+                        XÁC NHẬN KEY KÍCH HOẠT
                     </button>
                 </div>
             </form>
@@ -359,7 +357,7 @@
     <footer class="app-footer">
         <div class="footer-inner">
             <div class="footer-left">
-                <strong>LUV-DOC-TRAN Studio</strong> &bull; Nền Tảng Dịch Thuật Đa Ngữ &amp; Đa Định Dạng Doanh Nghiệp
+                <strong>LUV-DOC-TRAN Studio</strong> &bull; Nền Tảng Dịch Thuật Đa Ngữ &amp; Đa Định Dạng Cao Cấp
             </div>
             <div class="footer-right">
                 <span>Hỗ trợ: Word (.docx, .doc), PDF, Excel (.xlsx, .xls)</span>

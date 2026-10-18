@@ -201,22 +201,42 @@ body.studio-dark {
     border: 1px solid transparent;
 }
 
-.trial-active {
+.trial-active, .key-active {
     background: rgba(6, 182, 212, 0.1);
     border-color: rgba(6, 182, 212, 0.3);
     color: #38bdf8;
 }
 
-.trial-licensed {
+.trial-licensed, .key-licensed {
     background: rgba(16, 185, 129, 0.12);
     border-color: rgba(16, 185, 129, 0.35);
     color: #34d399;
 }
 
-.trial-revoked, .trial-expired {
+.trial-revoked, .trial-expired, .key-revoked {
     background: rgba(244, 63, 94, 0.12);
     border-color: rgba(244, 63, 94, 0.35);
     color: #fb7185;
+}
+
+.key-unactivated {
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #fbbf24;
+}
+
+.dropzone-key-warning {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: #fbbf24;
+    padding: 8px 16px;
+    border-radius: var(--radius-md);
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin: 8px 0 14px 0;
 }
 
 .pill-icon {

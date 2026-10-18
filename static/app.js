@@ -1,7 +1,7 @@
 /**
  * LUV-DOC-TRAN STUDIO PRO — Frontend Architecture Controller
  * ─────────────────────────────────────────────────────────────
- * Nền tảng Dịch thuật Song ngữ Đa ngữ & Đa định dạng Doanh nghiệp
+ * Nền tảng Dịch thuật Song ngữ Đa ngữ & Đa định dạng Cao Cấp
  * Hỗ trợ Đa tệp Word, PDF & Excel • Tải về tức thì từng tệp (Word & Excel Only)
  * Review Split-View Studio • Quản lý Bản Quyền Ed25519 & Thu hồi Real-time
  */
@@ -45,11 +45,12 @@ window.LuvApp = {
         return hash;
     },
 
-    // ── 2. REAL-TIME LICENSE & TRIAL STATUS ──────────────────────────────
+    // ── 2. REAL-TIME LICENSE & ACTIVATION STATUS ─────────────────────────
     checkLicenseAndTrial: async function() {
         const trialPill = document.getElementById("trial-pill");
         const trialText = document.getElementById("trial-timer-text");
         const licLabel = document.getElementById("license-header-label");
+        const dropWarning = document.getElementById("dropzone-key-warning");
 
         try {
             // A. Check License status with Cloudflare Worker Real-time Validation
@@ -58,81 +59,45 @@ window.LuvApp = {
 
             if (licData.is_active) {
                 this.isLicensed = true;
-                if (this.trialTimerInterval) {
-                    clearInterval(this.trialTimerInterval);
-                    this.trialTimerInterval = null;
-                }
-                if (trialPill) trialPill.className = "badge-pill trial-badge trial-licensed";
-                if (trialText) trialText.textContent = `Bản Quyền: ${licData.tier || 'Doanh Nghiệp (PRO)'}`;
-                if (licLabel) licLabel.textContent = "✓ Bản Quyền Đã Kích Hoạt";
+                if (trialPill) trialPill.className = "badge-pill key-badge key-licensed";
+                const cleanTier = (licData.tier || 'Key Kích Hoạt (PRO)').replace(/doanh\s*nghiệp/gi, 'Key Kích Hoạt');
+                if (trialText) trialText.textContent = cleanTier.includes('Key') ? cleanTier : `Key Kích Hoạt: ${cleanTier}`;
+                if (licLabel) licLabel.textContent = "✓ Đã Kích Hoạt Key";
+                if (dropWarning) dropWarning.style.display = "none";
                 return;
             }
 
             // B. If Key was revoked on Cloudflare D1
             if (licData.revoked) {
                 this.isLicensed = false;
-                if (this.trialTimerInterval) {
-                    clearInterval(this.trialTimerInterval);
-                    this.trialTimerInterval = null;
+                if (trialPill) trialPill.className = "badge-pill key-badge key-revoked";
+                if (trialText) trialText.textContent = "Key Đã Bị Thu Hồi";
+                if (licLabel) licLabel.textContent = "✕ Key Bị Khóa";
+                if (dropWarning) {
+                    dropWarning.style.display = "inline-flex";
+                    dropWarning.innerHTML = `<span>✕ Key kích hoạt đã bị thu hồi. Vui lòng nhập Key mới.</span>`;
                 }
-                if (trialPill) trialPill.className = "badge-pill trial-badge trial-revoked";
-                if (trialText) trialText.textContent = "Giấy Phép Đã Thu Hồi";
-                if (licLabel) licLabel.textContent = "✕ Giấy Phép Bị Khóa";
                 return;
             }
 
-            // C. Check 48h Free Trial
-            const trialResp = await fetch(`/api/trial/status?device_id=${encodeURIComponent(this.deviceId)}`);
-            const trialData = await trialResp.json();
+            // C. Mandatory Key required - No Free Trial
+            this.isLicensed = false;
+            if (trialPill) trialPill.className = "badge-pill key-badge key-unactivated";
+            if (trialText) trialText.textContent = "Chưa Nhập Key Kích Hoạt";
+            if (licLabel) licLabel.textContent = "Nhập Key Kích Hoạt";
+            if (dropWarning) dropWarning.style.display = "inline-flex";
 
-            this.trialRemainingSeconds = trialData.remaining_seconds || 0;
-
-            if (trialData.is_trial_active && this.trialRemainingSeconds > 0) {
-                if (trialPill) trialPill.className = "badge-pill trial-badge trial-active";
-                this.updateTrialDisplay();
-            } else {
-                if (trialPill) trialPill.className = "badge-pill trial-badge trial-expired";
-                if (trialText) trialText.textContent = "Hết Hạn Trải Nghiệm (Cần Key)";
-            }
         } catch (err) {
-            console.error("Lỗi kiểm tra bản quyền / dùng thử:", err);
+            console.error("Lỗi kiểm tra Key kích hoạt:", err);
         }
     },
 
     startTrialCountdown: function() {
-        if (this.trialTimerInterval) clearInterval(this.trialTimerInterval);
-        this.trialTimerInterval = setInterval(() => {
-            if (this.isLicensed) {
-                clearInterval(this.trialTimerInterval);
-                this.trialTimerInterval = null;
-                return;
-            }
-            if (this.trialRemainingSeconds > 0) {
-                this.trialRemainingSeconds--;
-                this.updateTrialDisplay();
-            }
-        }, 1000);
+        // No-op: Free trial mechanism eliminated, mandatory key enforced
     },
 
     updateTrialDisplay: function() {
-        if (this.isLicensed) return;
-        const trialText = document.getElementById("trial-timer-text");
-        if (!trialText) return;
-
-        const sec = this.trialRemainingSeconds;
-        const h = Math.floor(sec / 3600);
-        const m = Math.floor((sec % 3600) / 60);
-        const s = sec % 60;
-
-        if (h > 0) {
-            trialText.textContent = `Dùng thử: ${h}h ${m}m`;
-        } else if (m > 0) {
-            trialText.textContent = `Dùng thử: ${m}m ${s}s`;
-        } else {
-            trialText.textContent = `Hết hạn dùng thử`;
-            const pill = document.getElementById("trial-pill");
-            if (pill) pill.className = "badge-pill trial-badge trial-expired";
-        }
+        // No-op: Free trial mechanism eliminated, mandatory key enforced
     },
 
     // ── 3. DRAG & DROP MULTI-FILE QUEUE ──────────────────────────────────
@@ -167,6 +132,11 @@ window.LuvApp = {
     },
 
     handleFileSelect: function(files) {
+        if (!this.isLicensed) {
+            this.showToast("Vui lòng nhập Key kích hoạt trước khi tải tệp lên hệ thống.", "warning");
+            this.openLicenseModal();
+            return;
+        }
         if (!files || files.length === 0) return;
 
         const allowedExtensions = ['.docx', '.doc', '.pdf', '.xlsx', '.xls'];
@@ -354,6 +324,12 @@ window.LuvApp = {
 
     // ── 4. BATCH PROCESSING PIPELINE ─────────────────────────────────────
     startBatchProcessing: async function() {
+        if (!this.isLicensed) {
+            this.showToast("Vui lòng nhập Key kích hoạt để bắt đầu dịch thuật.", "warning");
+            this.openLicenseModal();
+            return;
+        }
+
         if (this.fileQueue.length === 0) {
             this.showToast("Vui lòng tải lên ít nhất một tệp tài liệu trước khi bắt đầu.", "error");
             return;
@@ -372,7 +348,7 @@ window.LuvApp = {
 
         const sourceLang = document.getElementById("sel-source-lang")?.value || "auto";
         const targetLang = document.getElementById("sel-target-lang")?.value || "vi";
-        const engine = document.getElementById("sel-engine")?.value || "deepseek";
+        const engine = document.getElementById("sel-engine")?.value || "neural";
 
         for (let i = 0; i < pendingItems.length; i++) {
             const item = pendingItems[i];
@@ -387,7 +363,7 @@ window.LuvApp = {
                 formData.append("file", item.file);
                 formData.append("source_lang", sourceLang);
                 formData.append("target_lang", targetLang);
-                formData.append("provider", engine === "deepseek" ? "deepseek" : "google");
+                formData.append("provider", engine === "fast" ? "google" : "neural");
                 formData.append("engine_mode", "auto");
                 formData.append("output_mode", "bilingual");
                 formData.append("device_id", this.deviceId);
@@ -614,18 +590,16 @@ window.LuvApp = {
     },
 
     handleActivateLicense: async function() {
-        const regInput = document.getElementById("act-reg-name");
         const keyInput = document.getElementById("act-key");
         const msgBox = document.getElementById("license-msg-box");
         const submitBtn = document.getElementById("btn-submit-activate");
 
-        const regName = (regInput ? regInput.value : "").trim();
         const key = (keyInput ? keyInput.value : "").trim();
 
         if (!key) {
             if (msgBox) {
                 msgBox.className = "license-alert-box alert-error";
-                msgBox.textContent = "Vui lòng nhập Mã Bản Quyền chính thức!";
+                msgBox.textContent = "Vui lòng nhập Mã Key Kích Hoạt chính thức!";
                 msgBox.style.display = "block";
             }
             return;
@@ -639,7 +613,7 @@ window.LuvApp = {
         try {
             const formData = new FormData();
             formData.append("key", key);
-            formData.append("registered_to", regName || "Doanh nghiệp LUV");
+            formData.append("registered_to", "Người Dùng Bản Quyền");
 
             const resp = await fetch("/api/license/activate", {
                 method: "POST",
@@ -651,19 +625,19 @@ window.LuvApp = {
             if (resp.ok && res.success) {
                 if (msgBox) {
                     msgBox.className = "license-alert-box alert-success";
-                    msgBox.textContent = "✓ Kích hoạt bản quyền thành công! Giấy phép đã được xác thực.";
+                    msgBox.textContent = "✓ Key kích hoạt đã được xác thực thành công!";
                     msgBox.style.display = "block";
                 }
 
                 await this.checkLicenseAndTrial();
-                this.showToast("Bản quyền Doanh nghiệp đã được kích hoạt thành công!", "success");
+                this.showToast("Key kích hoạt đã được xác thực thành công!", "success");
 
                 setTimeout(() => {
                     this.closeLicenseModal();
                 }, 1400);
 
             } else {
-                let errDetail = res.detail || res.message || "Mã bản quyền không tồn tại trên hệ thống.";
+                let errDetail = res.detail || res.message || "Mã Key kích hoạt không tồn tại hoặc đã đạt giới hạn thiết bị.";
                 if (msgBox) {
                     msgBox.className = "license-alert-box alert-error";
                     msgBox.textContent = "✕ " + errDetail;
@@ -673,13 +647,13 @@ window.LuvApp = {
         } catch (err) {
             if (msgBox) {
                 msgBox.className = "license-alert-box alert-error";
-                msgBox.textContent = "✕ Lỗi kết nối máy chủ giấy phép: " + err.message;
+                msgBox.textContent = "✕ Lỗi kết nối máy chủ xác thực: " + err.message;
                 msgBox.style.display = "block";
             }
         } finally {
             if (submitBtn) {
                 submitBtn.disabled = false;
-                submitBtn.innerHTML = `<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> XÁC NHẬN KÍCH HOẠT BẢN QUYỀN`;
+                submitBtn.innerHTML = `<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> XÁC NHẬN KEY KÍCH HOẠT`;
             }
         }
     },

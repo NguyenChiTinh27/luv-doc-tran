@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import patch
 import tempfile
 from pathlib import Path
 from fastapi.testclient import TestClient
@@ -18,10 +19,26 @@ class TestTranslationPipeline(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
         self.test_device = "TEST-E2E-DEV-001"
-        trials = LUVLicenseClient._read_trials()
-        if self.test_device in trials and trials[self.test_device].get("revoked"):
-            trials[self.test_device]["revoked"] = False
-            LUVLicenseClient._write_trials(trials)
+        self.patcher = patch.object(
+            LUVLicenseClient,
+            "check_access",
+            return_value={"has_access": True, "access_type": "licensed", "tier": "Key Kích Hoạt (ENTERPRISE)", "revoked": False}
+        )
+        self.patcher.start()
+
+    def tearDown(self):
+        self.patcher.stop()
+
+    def test_unactivated_translation_blocked(self):
+        """Verify translation is strictly blocked with HTTP 403 when unactivated."""
+        with patch.object(
+            LUVLicenseClient,
+            "check_access",
+            return_value={"has_access": False, "access_type": "unactivated", "license_required": True, "revoked": False}
+        ):
+            resp = self.client.post("/api/translate", data={"source_lang": "en", "target_lang": "vi"}, files={"file": ("test.docx", b"PK\x03\x04", "application/docx")})
+            self.assertEqual(resp.status_code, 403)
+            self.assertTrue(resp.json().get("license_required"))
 
     def test_status_endpoint(self):
         """Verify system status endpoint."""

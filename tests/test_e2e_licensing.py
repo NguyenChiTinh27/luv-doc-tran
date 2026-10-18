@@ -264,7 +264,7 @@ class TestTier1FeatureCoverage(BaseLicensingTestCase):
         self.assertTrue(res.get("is_active"))
         self.assertEqual(res.get("status"), "active")
         self.assertEqual(res.get("license_key"), OFFICIAL_GENUINE_KEY)
-        self.assertIn("Doanh Nghiệp", res.get("tier", ""))
+        self.assertIn("Key Kích Hoạt", res.get("tier", ""))
         self.assertIn("token", res)
 
     def test_08_validation_lease_sequence_incrementing(self):
@@ -1101,13 +1101,13 @@ class TestTier4RealWorldScenarios(BaseLicensingTestCase):
             wrong_public.verify(sig_bytes, payload_part.encode("ascii"))
 
     def test_35_trial_vs_licensed_access_state_machine(self):
-        """Verify check_access properly transitions between 48h trial state and official licensed state."""
-        # 1. Without license, check_access reports trial
+        """Verify check_access properly transitions between unactivated state and official licensed state."""
+        # 1. Without license, check_access reports unactivated (mandatory key mode)
         self._remove_test_artifacts()
         access_initial = LUVLicenseClient.check_access("DEV-TEST-STATE-MACHINE")
-        self.assertTrue(access_initial.get("has_access"))
-        self.assertEqual(access_initial.get("access_type"), "trial")
-        self.assertIn("Dùng thử", access_initial.get("tier", ""))
+        self.assertFalse(access_initial.get("has_access"))
+        self.assertEqual(access_initial.get("access_type"), "unactivated")
+        self.assertIn("Chưa Kích Hoạt", access_initial.get("tier", ""))
 
         # 2. After activating genuine license, check_access reports licensed
         sample_token = (

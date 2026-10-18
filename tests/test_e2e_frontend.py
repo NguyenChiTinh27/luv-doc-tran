@@ -55,9 +55,9 @@ class TestE2EFrontend(unittest.TestCase):
             brand_text = page.inner_text(".brand-name").replace("\n", "")
             self.assertIn("LUV-DOC-TRAN", brand_text)
 
-            # 2. Check 48-Hour Free Trial Pill
+            # 2. Check Key Status Pill
             trial_text = page.inner_text("#trial-timer-text")
-            self.assertTrue("Dùng thử" in trial_text or "Bản Quyền" in trial_text)
+            self.assertTrue("Key" in trial_text or "Kích Hoạt" in trial_text or "kết nối" in trial_text)
 
             # 3. Check Tech Intro Bar
             tech_bar = page.inner_text(".tech-bar")
@@ -69,21 +69,23 @@ class TestE2EFrontend(unittest.TestCase):
             page.screenshot(path=ss_path1)
             print(f"[E2E] Saved homepage screenshot: {ss_path1}")
 
-            # 4. Open License Activation Modal
+            # 4. Open License Activation Modal (Single Key Input)
             page.click("#btn-open-license")
             page.wait_for_selector("#modal-license", state="visible")
 
+            # Verify no registration name input exists
+            self.assertIsNone(page.query_selector("#act-reg-name"), "#act-reg-name must be removed")
+
             # Fill in License Key (Genuine Cloudflare D1 Ed25519 Key)
-            page.fill("#act-reg-name", "Doanh Nghiep LUV DOC-TRAN")
             page.fill("#act-key", "LUV-YMZHK-QUKY8-D4ATT-TSJVY")
 
             # Click Activate
             page.click("#btn-submit-activate")
             time.sleep(3)
 
-            # Verify badge updated
+            # Verify badge updated to valid
             header_badge = page.inner_text("#trial-pill")
-            self.assertIn("Bản Quyền", header_badge)
+            self.assertTrue("Key" in header_badge or "Hợp Lệ" in header_badge)
 
             # 5. Create 2 sample corporate files for Multi-file Upload testing (free of chemical keywords)
             sample_docx1 = os.path.join(BASE_DIR, "data", "temp", "e2e_sample_report.docx")
