@@ -73,13 +73,13 @@ class TestE2EFrontend(unittest.TestCase):
             page.click("#btn-open-license")
             page.wait_for_selector("#modal-license", state="visible")
 
-            # Fill in License Key
-            page.fill("#act-reg-name", "Doanh Nghiệp Kỹ Thuật Hóa Chất Alpha")
-            page.fill("#act-key", "LUV-PDF-2026-PRO-VN99")
+            # Fill in License Key (Genuine Cloudflare D1 Ed25519 Key)
+            page.fill("#act-reg-name", "Doanh Nghiep LUV DOC-TRAN")
+            page.fill("#act-key", "LUV-YMZHK-QUKY8-D4ATT-TSJVY")
 
             # Click Activate
             page.click("#btn-submit-activate")
-            time.sleep(2)
+            time.sleep(3)
 
             # Verify badge updated
             header_badge = page.inner_text("#trial-pill")

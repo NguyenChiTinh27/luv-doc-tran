@@ -344,6 +344,7 @@ window.LuvApp = {
         if (btnBatch) btnBatch.disabled = true;
 
         const sourceLang = document.getElementById("sel-source-lang")?.value || "auto";
+        const targetLang = document.getElementById("sel-target-lang")?.value || "vi";
         const engine = document.getElementById("sel-engine")?.value || "deepseek";
 
         for (let i = 0; i < pendingItems.length; i++) {
@@ -358,7 +359,7 @@ window.LuvApp = {
                 const formData = new FormData();
                 formData.append("file", item.file);
                 formData.append("source_lang", sourceLang);
-                formData.append("target_lang", "vi");
+                formData.append("target_lang", targetLang);
                 formData.append("provider", engine === "deepseek" ? "deepseek" : "google");
                 formData.append("engine_mode", "auto");
                 formData.append("output_mode", "bilingual");

@@ -516,6 +516,14 @@ LANG_NAME_MAP = {
     "zh": "tiếng Trung",
     "ja": "tiếng Nhật",
     "ko": "tiếng Hàn",
+    "fr": "tiếng Pháp",
+    "de": "tiếng Đức",
+    "es": "tiếng Tây Ban Nha",
+    "ru": "tiếng Nga",
+    "th": "tiếng Thái",
+    "it": "tiếng Ý",
+    "pt": "tiếng Bồ Đào Nha",
+    "id": "tiếng Indonesia",
     "auto": "ngôn ngữ gốc"
 }
 
@@ -525,6 +533,14 @@ GOOGLE_LANG_MAP = {
     "zh": "zh-CN",
     "ja": "ja",
     "ko": "ko",
+    "fr": "fr",
+    "de": "de",
+    "es": "es",
+    "ru": "ru",
+    "th": "th",
+    "it": "it",
+    "pt": "pt",
+    "id": "id",
     "auto": "auto"
 }
 
@@ -802,14 +818,40 @@ class InterlinearTranslator:
         # 1. Thử nghiệm Bing Translator Engine Chuyên sâu
         try:
             b_src = "zh-Hans" if source_lang.lower() in ["zh", "cn"] else source_lang.lower()
-            b_tgt = "vi" if target_lang.lower() == "vi" else target_lang.lower()
+            b_tgt = "zh-Hans" if target_lang.lower() in ["zh", "cn"] else target_lang.lower()
             bing_res = BingTranslatorEngine.translate_texts(texts, src=b_src, tgt=b_tgt)
-            if bing_res and len(bing_res) == len(texts):
+            if bing_res and len(bing_res) == len(texts) and any(r != t for r, t in zip(bing_res, texts)):
                 return bing_res
         except Exception:
             pass
 
-        # 2. Dự phòng: trả về nguyên bản có bảo toàn mã
+        # 2. Tầng Dự phòng Siêu Tốc: Google Translate Engine
+        try:
+            import urllib.request
+            import urllib.parse
+            g_src = GOOGLE_LANG_MAP.get(source_lang.lower(), source_lang.lower())
+            g_tgt = GOOGLE_LANG_MAP.get(target_lang.lower(), target_lang.lower())
+            g_results = []
+            for t in texts:
+                clean_t = (t or "").strip()
+                if not clean_t:
+                    g_results.append("")
+                    continue
+                try:
+                    q = urllib.parse.quote(clean_t)
+                    url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={g_src}&tl={g_tgt}&dt=t&q={q}"
+                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        g_results.append("".join(item[0] for item in data[0] if item[0]))
+                except Exception:
+                    g_results.append(clean_t)
+            if g_results and len(g_results) == len(texts):
+                return g_results
+        except Exception:
+            pass
+
+        # 3. Dự phòng cuối: trả về nguyên bản có bảo toàn mã
         return texts
 
     @classmethod
