@@ -11,3 +11,7 @@ trials_db.json
 .vscode/
 .idea/
 .env
+.agents/
+created_license.json
+tests/create_official_license.py
+tests/query_admin_api.py

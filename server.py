@@ -275,7 +275,7 @@ async def process_translation(
             content={
                 "success": False,
                 "trial_expired": True,
-                "message": "Thời hạn dùng thử 48 giờ miễn phí đã hết! Vui lòng kích hoạt Mã Bản Quyền để tiếp tục sử dụng không giới hạn nhen 🌸"
+                "message": "Thời hạn dùng thử 48 giờ miễn phí đã kết thúc. Vui lòng kích hoạt Mã Bản Quyền chính thức để tiếp tục sử dụng."
             }
         )
 
@@ -286,6 +286,7 @@ async def process_translation(
     # Save uploaded file
     saved_path = save_upload_file(file, TEMP_DIR)
 
+    effective_api_key = (api_key or "").strip() or DeepSeekOCR.get_saved_api_key()
     if api_key and api_key.strip():
         DeepSeekOCR.save_api_key(api_key.strip())
 
@@ -303,7 +304,7 @@ async def process_translation(
                 source_lang=source_lang,
                 target_lang=target_lang,
                 provider=provider,
-                api_key=api_key
+                api_key=effective_api_key
             )
 
             elapsed = round(time.time() - start_time, 2)
@@ -331,7 +332,7 @@ async def process_translation(
                 provider=provider,
                 engine_mode=engine_mode,
                 output_format="all" if ext == ".pdf" else "docx",
-                api_key=api_key
+                api_key=effective_api_key
             )
 
             # Ensure URLs

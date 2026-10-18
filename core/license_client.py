@@ -1,37 +1,68 @@
+"""
+core/license_client.py
+──────────────────────
+Hệ thống xác thực giấy phép bản quyền LUV-DOC-TRAN:
+- Kết nối trực tiếp Máy chủ Giấy phép Cloudflare Worker: https://luv-license-api.luv-sds.workers.dev
+- Xác thực mật mã bất đối xứng Ed25519 với Public Key chính thức.
+- Tương thích 100% với LUV_License_Manager.exe và LUV SDS Intelligence - Bản Hoàn Chỉnh.exe.
+- Chặn đứng 100% các mã nhập bừa / mã giả lập không tồn tại trong Cloudflare D1 Database.
+- Hỗ trợ cơ chế dùng thử 48 giờ (Anti-tamper 48h Trial).
+"""
+
+from __future__ import annotations
+
 import os
+import sys
 import json
 import time
-import hmac
+import base64
 import hashlib
 import platform
 import threading
 import urllib.request
-import urllib.parse
-from datetime import datetime
+import urllib.error
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Tuple
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LICENSE_FILE = os.path.join(BASE_DIR, "license.json")
 TRIALS_FILE = os.path.join(BASE_DIR, "trials_db.json")
 
-SECRET_SALT = "LUV_PDF_OFFICIAL_SECRET_KEY_2026"
+# Official Cloudflare Worker & Ed25519 Configuration
+DEFAULT_SERVER_URL = "https://luv-license-api.luv-sds.workers.dev"
+PUBLIC_KEY_B64 = "hsHHVWWmquFmME9wW4d2u1Qh5NdVtu3tktRDMl437Fo="
+APP_VERSION = "1.1.0"
+CLOCK_SKEW_SECONDS = 300
 TRIAL_DURATION_SECONDS = 48 * 3600  # 48 hours = 2 days
 
 _trial_lock = threading.Lock()
 
-def get_machine_id() -> str:
-    """Generate hardware machine ID for device."""
-    raw = f"{platform.node()}-{platform.processor()}-{os.getenv('USERNAME', 'LUV_USER')}"
-    return "LUV-" + hashlib.md5(raw.encode()).hexdigest()[:8].upper()
+
+def _b64url_decode(value: str) -> bytes:
+    """Decode base64url string with proper padding."""
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _utc_now() -> int:
+    return int(datetime.now(timezone.utc).timestamp())
+
+
+def generate_device_hash(raw_hint: str = "") -> str:
+    """Generate SHA-256 64-char hex device fingerprint matching license server format."""
+    parts = [platform.system(), platform.machine(), os.environ.get("COMPUTERNAME", "")]
+    if raw_hint:
+        parts.append(raw_hint)
+    raw = ("LUV-DEVICE-v1|" + "|".join(p for p in parts if p)).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
 
 class LUVLicenseClient:
     """
-    Manages 48-Hour Free Trial and License Key Validation for LUV-DOC-TRAN.
-    Compatible 100% with LUV_License_Manager.exe and TitanPDF Online License Manager.
+    Client quản lý giấy phép bản quyền mật mã Cloudflare & Dùng thử 48h.
     """
-
-    ONLINE_VERIFY_URL = os.environ.get("TITAN_LICENSE_VERIFY_URL", "http://127.0.0.1:8888/api/license/verify")
 
     @classmethod
     def _read_trials(cls) -> Dict[str, Any]:
@@ -56,29 +87,21 @@ class LUVLicenseClient:
                 os.rename(temp, TRIALS_FILE)
 
     @classmethod
-    def get_trial_status(cls, device_id: str) -> Dict[str, Any]:
-        """
-        Check or register 48-hour free trial for device_id.
-        Anti-tamper: Server stores trial start time linked to device fingerprint.
-        """
-        if not device_id or not device_id.strip():
-            device_id = get_machine_id()
-        else:
-            device_id = device_id.strip()
-
+    def get_trial_status(cls, device_id: str = "") -> Dict[str, Any]:
+        """Check or register 48-hour free trial for device."""
+        clean_dev = device_id.strip() if device_id else generate_device_hash()
         trials = cls._read_trials()
         now = time.time()
 
-        if device_id not in trials:
-            trials[device_id] = {
+        if clean_dev not in trials:
+            trials[clean_dev] = {
                 "started_at": now,
                 "started_at_str": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                "ip": "client",
-                "machine_id": get_machine_id()
+                "device_id": clean_dev
             }
             cls._write_trials(trials)
 
-        start_time = trials[device_id].get("started_at", now)
+        start_time = trials[clean_dev].get("started_at", now)
         elapsed = now - start_time
         remaining = max(0, TRIAL_DURATION_SECONDS - elapsed)
         is_valid = remaining > 0
@@ -88,10 +111,10 @@ class LUVLicenseClient:
         seconds = int(remaining % 60)
 
         return {
-            "device_id": device_id,
+            "device_id": clean_dev,
             "is_trial_active": is_valid,
             "remaining_seconds": int(remaining),
-            "remaining_formatted": f"{hours} giờ {minutes} phút" if hours > 0 else f"{minutes} phút {seconds} giây",
+            "remaining_formatted": f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m {seconds}s",
             "hours_left": hours,
             "minutes_left": minutes,
             "total_trial_hours": 48
@@ -99,7 +122,7 @@ class LUVLicenseClient:
 
     @classmethod
     def get_license_info(cls) -> Dict[str, Any]:
-        """Read activated license from disk."""
+        """Read activated license from disk and cryptographically verify signature."""
         if not os.path.exists(LICENSE_FILE):
             return {
                 "is_active": False,
@@ -110,97 +133,157 @@ class LUVLicenseClient:
         try:
             with open(LICENSE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                data["is_active"] = data.get("status") == "active"
-                return data
-        except Exception:
+
+            token = data.get("token")
+            if not token or "." not in token:
+                return {"is_active": False, "tier": "Chưa kích hoạt"}
+
+            # Verify Ed25519 signature of the stored token
+            payload_part, sig_part = token.split(".", 1)
+            pub_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(PUBLIC_KEY_B64))
+            sig_bytes = _b64url_decode(sig_part)
+            pub_key.verify(sig_bytes, payload_part.encode("ascii"))
+
+            claims = json.loads(_b64url_decode(payload_part).decode("utf-8"))
+            now = _utc_now()
+            exp = int(claims.get("exp", 0))
+
+            if exp > 0 and exp + CLOCK_SKEW_SECONDS < now:
+                return {
+                    "is_active": False,
+                    "tier": "Giấy phép đã hết hạn",
+                    "license_key": data.get("license_key"),
+                    "expired": True
+                }
+
+            return {
+                "is_active": True,
+                "tier": data.get("tier") or f"Doanh Nghiệp ({claims.get('plan', 'pro').upper()})",
+                "registered_to": claims.get("customer") or data.get("registered_to"),
+                "license_key": data.get("license_key"),
+                "expires_at": claims.get("expires_at") or data.get("expires_at"),
+                "features": claims.get("features", [])
+            }
+
+        except Exception as e:
             return {
                 "is_active": False,
                 "tier": "Chưa kích hoạt",
                 "registered_to": None,
-                "license_key": None
+                "license_key": None,
+                "error": str(e)
             }
 
     @classmethod
-    def verify_key(cls, key: str, registered_to: str = "") -> Tuple[bool, str, Dict[str, Any]]:
+    def activate_key(cls, key: str, registered_to: str = "Doanh nghiệp LUV", client_device_hint: str = "") -> Dict[str, Any]:
         """
-        Validate license key using hybrid mechanism:
-        1. Local Cryptographic SHA-256 Check (matching LUV_License_Manager.exe).
-        2. Online Verification against TitanPDF Registry (if reachable).
+        Kích hoạt mã giấy phép bằng cách kết nối trực tiếp với Máy chủ Cloudflare Worker:
+        https://luv-license-api.luv-sds.workers.dev/v1/activate
+
+        - Chặn 100% mã nhập bừa / mã giả mạo.
+        - Xác thực chữ ký Ed25519 của Cloudflare Worker.
         """
         if not key or not isinstance(key, str):
-            return False, "Mã bản quyền không được để trống", {}
+            raise ValueError("Vui lòng nhập Mã Bản Quyền chính thức!")
 
-        clean_key = key.strip().upper()
+        normalized_key = "".join(key.upper().split())
+        if len(normalized_key) < 16:
+            raise ValueError("Mã bản quyền không đúng định dạng. Mã giấy phép chuẩn có dạng LUV-XXXXX-XXXXX-XXXXX-XXXXX.")
 
-        # 1. Master Keys
-        if clean_key in ["LUV-PDF-2026-PRO-VN99", "LUV-2026-ENTERPRISE", "LUV-MASTER-KEY"]:
-            return True, "Kích hoạt thành công Master Key!", {
-                "tier": "Doanh Nghiệp Vĩnh Viễn (Master Lifetime)",
-                "registered_to": registered_to.strip() or "Quản Trị Viên VIP",
-                "expires_at": "Vĩnh viễn (Lifetime)"
+        dev_id = generate_device_hash(client_device_hint)
+        dev_label = (registered_to.strip() or platform.node() or "Windows Client")[:80]
+
+        # First try product code 'DOC', fallback to 'SDS' (since owner key / keys may have DOC or SDS product entitlement)
+        products_to_try = ["DOC", "SDS"]
+        last_error = "Không thể kích hoạt mã bản quyền."
+
+        token = None
+        claims = None
+
+        for prod in products_to_try:
+            payload = {
+                "license_key": normalized_key,
+                "device_id": dev_id,
+                "device_label": dev_label,
+                "app_version": APP_VERSION,
+                "product_code": prod
             }
 
-        # 2. Online verification fallback
-        online_data = None
-        try:
-            url = f"{cls.ONLINE_VERIFY_URL}?key={clean_key}"
-            req = urllib.request.Request(url, headers={"User-Agent": "LUV-DOC-TRAN/1.0"})
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                if resp.status == 200:
-                    online_data = json.loads(resp.read().decode())
-        except Exception:
-            online_data = None
-
-        if online_data and online_data.get("valid"):
-            return True, "Xác thực bản quyền trực tuyến thành công!", {
-                "tier": online_data.get("tier", "Doanh Nghiệp Vĩnh Viễn"),
-                "registered_to": registered_to.strip() or online_data.get("registered_to", "Khách hàng LUV"),
-                "expires_at": online_data.get("expires_at", "Vĩnh viễn")
-            }
-
-        # 3. Offline Cryptographic Check (matching LUV_License_Manager.exe)
-        # Format check: LUV-(PRO|ENT|PDF)-XXXX-XXXX-XXXX
-        parts = clean_key.split("-")
-        if len(parts) >= 4 and parts[0] in ["LUV"] and parts[1] in ["PRO", "ENT", "PDF"]:
-            tier_name = "Doanh Nghiệp Vĩnh Viễn (Enterprise Lifetime)" if parts[1] == "ENT" else (
-                "Chuyên Nghiệp (Professional Suite)" if parts[1] == "PRO" else "Tiêu Chuẩn (Standard License)"
+            req = urllib.request.Request(
+                f"{DEFAULT_SERVER_URL}/v1/activate",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": f"LUV-{prod}/{APP_VERSION}"
+                },
+                method="POST"
             )
-            return True, "Xác thực bản quyền mật mã SHA-256 thành công!", {
-                "tier": tier_name,
-                "registered_to": registered_to.strip() or "Khách hàng Doanh Nghiệp LUV",
-                "expires_at": "Vĩnh viễn (Lifetime - Không giới hạn)"
-            }
 
-        return False, "Mã bản quyền không hợp lệ hoặc sai định dạng LUV-XXX-XXXX-XXXX!", {}
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    resp_data = json.loads(resp.read().decode("utf-8"))
+                    token = resp_data.get("token")
+                    if token:
+                        break
+            except urllib.error.HTTPError as exc:
+                raw = exc.read().decode("utf-8", errors="replace")
+                try:
+                    parsed = json.loads(raw)
+                    msg = parsed.get("message") or parsed.get("error") or raw
+                except Exception:
+                    msg = raw
+                last_error = msg
+            except Exception as e:
+                last_error = f"Không thể kết nối tới máy chủ giấy phép ({str(e)})."
 
-    @classmethod
-    def activate_key(cls, key: str, registered_to: str = "Doanh nghiệp LUV") -> Dict[str, Any]:
-        """Activate and persist the license key."""
-        valid, msg, details = cls.verify_key(key, registered_to)
-        if not valid:
-            raise ValueError(msg)
+        if not token:
+            raise ValueError(f"Máy chủ giấy phép từ chối kích hoạt: {last_error}")
+
+        # Cryptographically verify the Ed25519 signature
+        try:
+            payload_part, sig_part = token.split(".", 1)
+            pub_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(PUBLIC_KEY_B64))
+            sig_bytes = _b64url_decode(sig_part)
+            pub_key.verify(sig_bytes, payload_part.encode("ascii"))
+            claims = json.loads(_b64url_decode(payload_part).decode("utf-8"))
+        except (InvalidSignature, Exception) as exc:
+            raise ValueError(f"Chữ ký số của giấy phép không hợp lệ: {str(exc)}")
+
+        # Check claims
+        now = _utc_now()
+        exp = int(claims.get("exp", 0))
+        if exp > 0 and exp + CLOCK_SKEW_SECONDS < now:
+            raise ValueError("Mã bản quyền này đã hết hạn sử dụng.")
+
+        plan_name = claims.get("plan", "Enterprise").upper()
+        customer_name = claims.get("customer") or registered_to
 
         record = {
             "status": "active",
-            "license_key": key.strip().upper(),
-            "registered_to": details.get("registered_to", registered_to),
-            "tier": details.get("tier", "Doanh Nghiệp Vĩnh Viễn"),
-            "expires_at": details.get("expires_at", "Vĩnh viễn"),
+            "license_id": claims.get("license_id"),
+            "license_key": normalized_key,
+            "registered_to": customer_name,
+            "tier": f"Doanh Nghiệp ({plan_name})",
+            "expires_at": claims.get("expires_at", "Vĩnh viễn"),
+            "offline_until": claims.get("offline_until_iso"),
+            "features": claims.get("features", []),
+            "token": token,
             "activated_at": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-            "machine_id": get_machine_id()
+            "device_id": dev_id,
+            "is_active": True
         }
 
+        # Persist valid license
         with open(LICENSE_FILE, "w", encoding="utf-8") as f:
             json.dump(record, f, ensure_ascii=False, indent=2)
 
-        record["is_active"] = True
         return record
 
     @classmethod
-    def check_access(cls, device_id: str) -> Dict[str, Any]:
+    def check_access(cls, device_id: str = "") -> Dict[str, Any]:
         """
-        Check if current client has active permission to translate:
-        either via valid License Key OR via 48-hour Free Trial.
+        Check if client has active permission to translate:
+        either via valid cryptographic License Key OR via 48-hour Free Trial.
         """
         lic = cls.get_license_info()
         if lic.get("is_active"):
@@ -211,7 +294,7 @@ class LUVLicenseClient:
                 "registered_to": lic.get("registered_to", "Doanh nghiệp"),
                 "license_key": lic.get("license_key"),
                 "remaining_seconds": None,
-                "remaining_formatted": "Vĩnh viễn (Không giới hạn)"
+                "remaining_formatted": "Bản Quyền Chính Thức"
             }
 
         trial = cls.get_trial_status(device_id)

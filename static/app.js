@@ -1,19 +1,22 @@
 /**
- * LUV-DOC-TRAN — Frontend Controller
- * ──────────────────────────────────
- * Trình điều khiển giao diện Pastel Kawaii, Review Split-View Studio,
- * Đếm ngược dùng thử 48h và Cơ chế ưu tiên file Word + Loading PDF 2-3 phút.
+ * LUV-DOC-TRAN — Frontend Architecture Controller
+ * ─────────────────────────────────────────────────────────────
+ * Hệ thống Dịch thuật Song ngữ Kỹ thuật Chuyên Nghiệp (DOC-TRAN PRO)
+ * Hỗ trợ Tải nhiều tệp (Multi-file Batch Queue) • Tải về tức thì từng tệp
+ * Review Split-View Studio • Quản lý Bản Quyền & Dùng thử 48h
  */
 
 window.LuvApp = {
-    selectedFile: null,
-    currentResults: null,
+    fileQueue: [],
+    activeFileId: null,
+    currentViewingResults: null,
     deviceId: null,
     trialRemainingSeconds: 0,
     trialTimerInterval: null,
     syncScrollEnabled: true,
     currentZoom: 100,
     isInlineEditing: false,
+    isProcessingBatch: false,
 
     init: async function() {
         this.initDeviceId();
@@ -49,17 +52,14 @@ window.LuvApp = {
         const licLabel = document.getElementById("license-header-label");
 
         try {
-            // A. Check License first
+            // A. Check License status
             const licResp = await fetch("/api/license/status");
             const licData = await licResp.json();
 
-            const trialIcon = document.getElementById("trial-icon");
-
             if (licData.is_active) {
-                if (trialPill) trialPill.className = "trial-badge trial-active";
-                if (trialIcon) trialIcon.textContent = "👑";
+                if (trialPill) trialPill.className = "badge-pill trial-badge trial-active";
                 if (trialText) trialText.textContent = `Bản Quyền: ${licData.tier || 'Vĩnh Viễn'}`;
-                if (licLabel) licLabel.textContent = "✓ Đã Kích Hoạt";
+                if (licLabel) licLabel.textContent = "✓ Bản Quyền Đã Kích Hoạt";
                 return;
             }
 
@@ -70,16 +70,14 @@ window.LuvApp = {
             this.trialRemainingSeconds = trialData.remaining_seconds || 0;
 
             if (trialData.is_trial_active && this.trialRemainingSeconds > 0) {
-                if (trialPill) trialPill.className = "trial-badge trial-active";
-                if (trialIcon) trialIcon.textContent = "🌸";
+                if (trialPill) trialPill.className = "badge-pill trial-badge trial-active";
                 this.updateTrialDisplay();
             } else {
-                if (trialPill) trialPill.className = "trial-badge trial-expired";
-                if (trialIcon) trialIcon.textContent = "🔒";
-                if (trialText) trialText.textContent = "Hết Hạn Dùng Thử (Cần Key)";
+                if (trialPill) trialPill.className = "badge-pill trial-badge trial-expired";
+                if (trialText) trialText.textContent = "Hết Hạn Trải Nghiệm (Cần Key)";
             }
         } catch (err) {
-            console.error("Lỗi kiểm tra bản quyền/dùng thử:", err);
+            console.error("Lỗi kiểm tra bản quyền / dùng thử:", err);
         }
     },
 
@@ -103,17 +101,17 @@ window.LuvApp = {
         const s = sec % 60;
 
         if (h > 0) {
-            trialText.textContent = `Dùng thử: ${h}h ${m}m còn lại`;
+            trialText.textContent = `Dùng thử: ${h}h ${m}m`;
         } else if (m > 0) {
-            trialText.textContent = `Dùng thử: ${m}m ${s}s còn lại`;
+            trialText.textContent = `Dùng thử: ${m}m ${s}s`;
         } else {
             trialText.textContent = `Hết hạn dùng thử`;
             const pill = document.getElementById("trial-pill");
-            if (pill) pill.className = "trial-badge trial-expired";
+            if (pill) pill.className = "badge-pill trial-badge trial-expired";
         }
     },
 
-    // ── 3. DRAG AND DROP & FILE SELECTION ────────────────────────────────
+    // ── 3. DRAG AND DROP & MULTI-FILE QUEUE ──────────────────────────────
     setupDragAndDrop: function() {
         const dropzone = document.getElementById("dropzone");
         if (!dropzone) return;
@@ -143,216 +141,325 @@ window.LuvApp = {
 
     handleFileSelect: function(files) {
         if (!files || files.length === 0) return;
-        const file = files[0];
-        const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
 
-        if (!['.docx', '.doc', '.pdf', '.xlsx', '.xls'].includes(ext)) {
-            alert('Vui lòng chọn định dạng được hỗ trợ: .docx, .doc, .pdf, .xlsx hoặc .xls nhen!');
+        let addedCount = 0;
+        const allowedExts = ['.docx', '.doc', '.pdf', '.xlsx', '.xls'];
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+
+            if (!allowedExts.includes(ext)) {
+                alert(`Tệp "${file.name}" không hợp lệ. Vui lòng chọn tệp Word (.docx, .doc), PDF (.pdf) hoặc Excel (.xlsx, .xls).`);
+                continue;
+            }
+
+            // Generate unique item ID
+            const itemId = "file_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+            this.fileQueue.push({
+                id: itemId,
+                file: file,
+                name: file.name,
+                size: file.size,
+                ext: ext,
+                status: 'waiting',      // 'waiting', 'translating', 'ready', 'error'
+                statusText: 'Chờ xử lý',
+                results: null,
+                errorMsg: null
+            });
+            addedCount++;
+        }
+
+        // Reset input element
+        const fileInput = document.getElementById("file-input");
+        if (fileInput) fileInput.value = "";
+
+        if (addedCount > 0) {
+            this.renderQueueTable();
+        }
+    },
+
+    renderQueueTable: function() {
+        const container = document.getElementById("queue-container");
+        const tbody = document.getElementById("queue-tbody");
+        const countBadge = document.getElementById("queue-count-badge");
+        const summaryText = document.getElementById("queue-summary-text");
+
+        if (!container || !tbody) return;
+
+        if (this.fileQueue.length === 0) {
+            container.style.display = "none";
             return;
         }
 
-        this.selectedFile = file;
+        container.style.display = "block";
+        if (countBadge) countBadge.textContent = `${this.fileQueue.length} tệp`;
 
-        // Display selected file card
-        const dropzoneContent = document.querySelector(".dropzone-content");
-        const fileCard = document.getElementById("selected-file-card");
-        const fileName = document.getElementById("selected-file-name");
-        const fileSize = document.getElementById("selected-file-size");
-        const fileIcon = document.getElementById("file-type-icon");
-
-        if (dropzoneContent) dropzoneContent.style.display = "none";
-        if (fileCard) fileCard.style.display = "flex";
-        if (fileName) fileName.textContent = file.name;
-        if (fileSize) fileSize.textContent = this.formatFileSize(file.size);
-
-        if (fileIcon) {
-            if (['.docx', '.doc'].includes(ext)) fileIcon.textContent = "📝";
-            else if (ext === '.pdf') fileIcon.textContent = "📄";
-            else if (['.xlsx', '.xls'].includes(ext)) fileIcon.textContent = "📊";
+        const completedCount = this.fileQueue.filter(f => f.status === 'ready').length;
+        if (summaryText) {
+            if (completedCount === 0) {
+                summaryText.textContent = `Đã chọn ${this.fileQueue.length} tài liệu. Nhấn "Bắt đầu dịch tất cả" để tiến hành.`;
+            } else {
+                summaryText.textContent = `Đã hoàn thành ${completedCount}/${this.fileQueue.length} tài liệu. Bạn có thể tải ngay từng tệp bên trên!`;
+            }
         }
 
-        // Change hero mascot expression
-        const mascot = document.getElementById("hero-mascot-avatar");
-        if (mascot) mascot.textContent = "😻";
+        tbody.innerHTML = this.fileQueue.map((item, index) => {
+            let fmtBadgeClass = 'fmt-word';
+            let fmtLabel = 'WORD';
+            if (item.ext === '.pdf') {
+                fmtBadgeClass = 'fmt-pdf';
+                fmtLabel = 'PDF';
+            } else if (['.xlsx', '.xls'].includes(item.ext)) {
+                fmtBadgeClass = 'fmt-excel';
+                fmtLabel = 'EXCEL';
+            }
+
+            // Status badge rendering
+            let statusHtml = '';
+            if (item.status === 'waiting') {
+                statusHtml = `<span class="status-badge status-waiting">⏳ Chờ xử lý</span>`;
+            } else if (item.status === 'translating') {
+                statusHtml = `<span class="status-badge status-processing"><span class="spinner-mini"></span> ${item.statusText || 'Đang dịch...'}</span>`;
+            } else if (item.status === 'ready') {
+                statusHtml = `<span class="status-badge status-complete">✓ Hoàn thành (${item.elapsed || 0}s)</span>`;
+            } else if (item.status === 'error') {
+                statusHtml = `<span class="status-badge status-error" title="${item.errorMsg || ''}">✕ Lỗi xử lý</span>`;
+            }
+
+            // Action buttons rendering:
+            // "XONG FILE NÀO THÌ CÓ THỂ CHO PHÉP TẢI FILE ĐÓ VỀ NGAY LẬP TỨC"
+            let actionsHtml = '';
+            if (item.status === 'ready' && item.results) {
+                const res = item.results;
+                if (item.ext === '.xlsx' || item.ext === '.xls') {
+                    actionsHtml = `
+                        <div class="row-actions-group">
+                            <a href="${res.download_url}" class="btn-row-action btn-row-word" download>
+                                📊 Tải Excel (.xlsx)
+                            </a>
+                            <button type="button" class="btn-row-action btn-row-view" onclick="window.LuvApp.viewSplitStudio('${item.id}')">
+                                🔍 Xem So Sánh
+                            </button>
+                        </div>
+                    `;
+                } else {
+                    actionsHtml = `
+                        <div class="row-actions-group">
+                            <button type="button" class="btn-row-action btn-row-word" onclick="window.LuvApp.downloadFileWord('${item.id}')" title="Tải Word xử lý tức thì">
+                                ⚡ Tải Word (.docx)
+                            </button>
+                            <button type="button" class="btn-row-action btn-row-pdf" onclick="window.LuvApp.handleFilePdfDownload('${item.id}')" title="Tải PDF vector chuẩn in">
+                                📄 Tải PDF
+                            </button>
+                            <button type="button" class="btn-row-action btn-row-view" onclick="window.LuvApp.viewSplitStudio('${item.id}')" title="Xem trước tài liệu">
+                                🔍 So Sánh
+                            </button>
+                        </div>
+                    `;
+                }
+            } else if (item.status === 'translating') {
+                actionsHtml = `<span style="font-size:0.75rem; color:#94a3b8;">Đang xử lý tài liệu...</span>`;
+            } else {
+                actionsHtml = `
+                    <div class="row-actions-group">
+                        <button type="button" class="btn-row-delete" onclick="window.LuvApp.removeQueueItem('${item.id}')" title="Xóa khỏi hàng đợi">
+                            ✕
+                        </button>
+                    </div>
+                `;
+            }
+
+            return `
+                <tr class="queue-row" id="row-${item.id}">
+                    <td style="color:#64748b; font-family:var(--font-mono);">${index + 1}</td>
+                    <td>
+                        <div class="file-name-cell">
+                            <span class="file-cell-icon">${this.getFileIconSvg(item.ext)}</span>
+                            <span>${this.escapeHtml(item.name)}</span>
+                        </div>
+                    </td>
+                    <td><span class="file-fmt-badge ${fmtBadgeClass}">${fmtLabel}</span></td>
+                    <td style="color:#94a3b8; font-family:var(--font-mono); font-size:0.8rem;">${this.formatFileSize(item.size)}</td>
+                    <td>${statusHtml}</td>
+                    <td>${actionsHtml}</td>
+                </tr>
+            `;
+        }).join('');
     },
 
-    clearSelectedFile: function() {
-        this.selectedFile = null;
-        const input = document.getElementById("file-input");
-        if (input) input.value = "";
+    removeQueueItem: function(itemId) {
+        if (this.isProcessingBatch) return;
+        this.fileQueue = this.fileQueue.filter(f => f.id !== itemId);
+        this.renderQueueTable();
+    },
 
-        const dropzoneContent = document.querySelector(".dropzone-content");
-        const fileCard = document.getElementById("selected-file-card");
-        if (dropzoneContent) dropzoneContent.style.display = "block";
-        if (fileCard) fileCard.style.display = "none";
+    clearAllQueue: function() {
+        if (this.isProcessingBatch) return;
+        this.fileQueue = [];
+        this.renderQueueTable();
+        const studio = document.getElementById("split-view-studio");
+        if (studio) studio.style.display = "none";
+    },
 
-        const mascot = document.getElementById("hero-mascot-avatar");
-        if (mascot) mascot.textContent = "🐱";
+    getFileIconSvg: function(ext) {
+        if (['.docx', '.doc'].includes(ext)) {
+            return `<svg viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" style="width:16px;height:16px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+        } else if (ext === '.pdf') {
+            return `<svg viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2" style="width:16px;height:16px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+        } else {
+            return `<svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2" style="width:16px;height:16px;"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>`;
+        }
     },
 
     formatFileSize: function(bytes) {
+        if (!bytes) return "0 B";
         if (bytes < 1024) return bytes + " B";
         if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
         return (bytes / 1048576).toFixed(2) + " MB";
     },
 
-    toggleApiKeySection: function() {
-        const panel = document.getElementById("api-key-panel");
-        const arrow = document.getElementById("accordion-arrow");
-        if (panel) {
-            const isHidden = panel.style.display === "none";
-            panel.style.display = isHidden ? "block" : "none";
-            if (arrow) arrow.textContent = isHidden ? "▲" : "▼";
-        }
+    escapeHtml: function(str) {
+        return (str || '').replace(/[&<>"']/g, function(m) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
+        });
     },
 
-    // ── 4. TRANSLATION PIPELINE ──────────────────────────────────────────
-    startTranslation: async function() {
-        if (!this.selectedFile) {
-            alert("Bạn ơi, hãy chọn một tệp tài liệu trước khi bấm dịch nhen! 🌸");
+    // ── 4. BATCH PROCESSING PIPELINE ─────────────────────────────────────
+    startBatchProcessing: async function() {
+        if (this.fileQueue.length === 0) {
+            alert("Vui lòng tải lên ít nhất một tệp tài liệu trước khi bắt đầu.");
             return;
         }
 
-        const btnTranslate = document.getElementById("btn-start-translate");
-        const btnText = document.getElementById("btn-translate-text");
-        const progressBox = document.getElementById("progress-box");
-        const progressFill = document.getElementById("progress-bar-fill");
-        const progressStatus = document.getElementById("progress-status-text");
-        const progressPercent = document.getElementById("progress-percent-text");
+        const pendingItems = this.fileQueue.filter(f => f.status === 'waiting' || f.status === 'error');
+        if (pendingItems.length === 0) {
+            alert("Tất cả tài liệu trong hàng đợi đã được xử lý xong!");
+            return;
+        }
+
+        this.isProcessingBatch = true;
+        const btnBatch = document.getElementById("btn-start-batch");
+        const btnText = document.getElementById("btn-batch-text");
+        if (btnBatch) btnBatch.disabled = true;
 
         const sourceLang = document.getElementById("sel-source-lang")?.value || "auto";
         const engine = document.getElementById("sel-engine")?.value || "deepseek";
-        const apiKey = document.getElementById("input-api-key")?.value || "";
 
-        const formData = new FormData();
-        formData.append("file", this.selectedFile);
-        formData.append("source_lang", sourceLang);
-        formData.append("target_lang", "vi");
-        formData.append("provider", engine === "deepseek" ? "deepseek" : "google");
-        formData.append("engine_mode", "auto");
-        formData.append("output_mode", "bilingual");
-        formData.append("api_key", apiKey);
-        formData.append("device_id", this.deviceId);
+        for (let i = 0; i < pendingItems.length; i++) {
+            const item = pendingItems[i];
+            if (btnText) btnText.textContent = `ĐANG DỊCH TỆP ${i + 1}/${pendingItems.length}...`;
 
-        // UI state: translating
-        if (btnTranslate) btnTranslate.disabled = true;
-        if (btnText) btnText.textContent = "ĐANG DỊCH SONG NGỮ...";
-        if (progressBox) progressBox.style.display = "block";
+            item.status = 'translating';
+            item.statusText = 'Đang phân tích bố cục...';
+            this.renderQueueTable();
 
-        let percent = 15;
-        this.updateProgress(percent, "Đang tải tệp lên và phân tích bố cục tài liệu...");
+            try {
+                const formData = new FormData();
+                formData.append("file", item.file);
+                formData.append("source_lang", sourceLang);
+                formData.append("target_lang", "vi");
+                formData.append("provider", engine === "deepseek" ? "deepseek" : "google");
+                formData.append("engine_mode", "auto");
+                formData.append("output_mode", "bilingual");
+                formData.append("device_id", this.deviceId);
 
-        const progressTimer = setInterval(() => {
-            if (percent < 85) {
-                percent += Math.floor(Math.random() * 8) + 4;
-                if (percent > 85) percent = 85;
-                let status = "Đang dịch liên dòng chuẩn nhận diện (#002060 nghiêng)...";
-                if (percent > 50) status = "Đang bảo toàn bảng biểu, cấu trúc ô và mã CAS...";
-                if (percent > 70) status = "Đang chuẩn bị bản xem trước Split-View...";
-                this.updateProgress(percent, status);
+                // Simulation updater for file item
+                let simPercent = 20;
+                const simInterval = setInterval(() => {
+                    if (item.status === 'translating' && simPercent < 85) {
+                        simPercent += 15;
+                        item.statusText = `Đang dịch liên dòng... (${simPercent}%)`;
+                        this.renderQueueTable();
+                    }
+                }, 900);
+
+                const resp = await fetch("/api/translate", {
+                    method: "POST",
+                    body: formData
+                });
+
+                clearInterval(simInterval);
+
+                if (resp.status === 403) {
+                    const errData = await resp.json();
+                    item.status = 'error';
+                    item.errorMsg = errData.message || "Hết hạn dùng thử!";
+                    this.renderQueueTable();
+                    alert(errData.message || "Thời hạn dùng thử 48h đã kết thúc. Vui lòng kích hoạt bản quyền để tiếp tục.");
+                    this.openLicenseModal();
+                    break;
+                }
+
+                const res = await resp.json();
+                if (!resp.ok || !res.success) {
+                    throw new Error(res.detail || "Không thể dịch tài liệu.");
+                }
+
+                // Item completed successfully!
+                item.status = 'ready';
+                item.results = res;
+                item.elapsed = res.elapsed_seconds || 3;
+                this.renderQueueTable();
+
+                // If this is the first completed file or current view is empty, open Split-View
+                if (!this.currentViewingResults) {
+                    this.viewSplitStudio(item.id);
+                }
+
+            } catch (err) {
+                console.error(`Lỗi dịch tệp ${item.name}:`, err);
+                item.status = 'error';
+                item.errorMsg = err.message;
+                this.renderQueueTable();
             }
-        }, 800);
-
-        try {
-            // First load original preview in background
-            this.loadOriginalPreview(this.selectedFile);
-
-            const resp = await fetch("/api/translate", {
-                method: "POST",
-                body: formData
-            });
-
-            clearInterval(progressTimer);
-
-            if (resp.status === 403) {
-                const errData = await resp.json();
-                this.updateProgress(100, "Đã hết hạn dùng thử!");
-                alert(errData.message || "Thời hạn dùng thử 48h đã kết thúc! Vui lòng kích hoạt bản quyền để tiếp tục.");
-                this.openLicenseModal();
-                return;
-            }
-
-            const res = await resp.json();
-
-            if (!resp.ok || !res.success) {
-                throw new Error(res.detail || "Không thể dịch tài liệu.");
-            }
-
-            this.updateProgress(100, "Dịch song ngữ hoàn tất thành công! ✨");
-            this.currentResults = res;
-
-            // Show Split-View Studio
-            setTimeout(() => {
-                if (progressBox) progressBox.style.display = "none";
-                this.displaySplitViewStudio(res);
-            }, 600);
-
-        } catch (err) {
-            clearInterval(progressTimer);
-            console.error("Lỗi khi dịch:", err);
-            alert("Có lỗi xảy ra trong quá trình dịch: " + err.message);
-            this.updateProgress(0, "Lỗi: " + err.message);
-        } finally {
-            if (btnTranslate) btnTranslate.disabled = false;
-            if (btnText) btnText.textContent = "BẮT ĐẦU DỊCH SONG NGỮ NGAY";
         }
+
+        this.isProcessingBatch = false;
+        if (btnBatch) btnBatch.disabled = false;
+        if (btnText) btnText.textContent = "BẮT ĐẦU DỊCH TẤT CẢ TỆP";
     },
 
-    updateProgress: function(percent, status) {
-        const fill = document.getElementById("progress-bar-fill");
-        const stat = document.getElementById("progress-status-text");
-        const pct = document.getElementById("progress-percent-text");
-        if (fill) fill.style.width = percent + "%";
-        if (stat) stat.textContent = status;
-        if (pct) pct.textContent = percent + "%";
-    },
+    // ── 5. SPLIT-VIEW STUDIO CONTROLS ────────────────────────────────────
+    viewSplitStudio: async function(itemId) {
+        const item = this.fileQueue.find(f => f.id === itemId);
+        if (!item || !item.results) return;
 
-    // ── 5. REVIEW SPLIT-VIEW STUDIO & PREVIEWS ───────────────────────────
-    loadOriginalPreview: async function(file) {
-        const pane = document.getElementById("pane-original");
-        const meta = document.getElementById("orig-page-indicator");
-        if (!pane) return;
+        this.activeFileId = itemId;
+        this.currentViewingResults = item.results;
 
-        try {
-            pane.innerHTML = `<div class="pane-loading">Đang phân giải văn bản gốc...</div>`;
-            const fd = new FormData();
-            fd.append("file", file);
-
-            const resp = await fetch("/api/preview/upload", {
-                method: "POST",
-                body: fd
-            });
-            const res = await resp.json();
-
-            if (res.success && res.html) {
-                pane.innerHTML = res.html;
-                if (meta) meta.textContent = `${res.type?.toUpperCase() || 'VĂN BẢN'} (${file.name})`;
-                this.setupSyncScroll();
-            } else {
-                pane.innerHTML = `<div class="pane-loading">Không thể hiển thị xem trước tệp gốc.</div>`;
-            }
-        } catch (err) {
-            pane.innerHTML = `<div class="pane-loading" style="color:#ef4444;">Lỗi xem trước gốc: ${err.message}</div>`;
-        }
-    },
-
-    displaySplitViewStudio: async function(results) {
         const studio = document.getElementById("split-view-studio");
         const hudName = document.getElementById("hud-doc-name");
+        const paneOrig = document.getElementById("pane-original");
         const paneTran = document.getElementById("pane-translated");
 
-        if (hudName) hudName.textContent = this.selectedFile?.name || "document";
+        if (hudName) hudName.textContent = item.name;
         if (studio) {
             studio.style.display = "block";
             studio.scrollIntoView({ behavior: "smooth", block: "start" });
         }
 
-        // Change hero mascot to celebratory
-        const mascot = document.getElementById("hero-mascot-avatar");
-        if (mascot) mascot.textContent = "🎉";
+        // 1. Load original preview
+        if (paneOrig) {
+            paneOrig.innerHTML = `<div class="pane-loading">Đang tải bản xem trước tài liệu nguồn...</div>`;
+            try {
+                const fd = new FormData();
+                fd.append("file", item.file);
+                const resp = await fetch("/api/preview/upload", { method: "POST", body: fd });
+                const res = await resp.json();
+                if (res.success && res.html) {
+                    paneOrig.innerHTML = res.html;
+                    this.setupSyncScroll();
+                } else {
+                    paneOrig.innerHTML = `<div class="pane-loading">Không thể hiển thị xem trước tệp nguồn.</div>`;
+                }
+            } catch (err) {
+                paneOrig.innerHTML = `<div class="pane-loading" style="color:#f87171;">Lỗi tải xem trước: ${err.message}</div>`;
+            }
+        }
 
-        // Load translated preview
-        const outName = results.preview_output_filename || (results.docx_path ? results.docx_path.split(/[\\/]/).pop() : null);
+        // 2. Load translated preview
+        const outName = item.results.preview_output_filename || (item.results.docx_path ? item.results.docx_path.split(/[\\/]/).pop() : null);
         if (outName && paneTran) {
             paneTran.innerHTML = `<div class="pane-loading">Đang tải bản dịch song ngữ...</div>`;
             try {
@@ -362,15 +469,14 @@ window.LuvApp = {
                     paneTran.innerHTML = res.html;
                     this.setupSyncScroll();
                 } else {
-                    paneTran.innerHTML = `<div class="pane-loading">Bản dịch đã hoàn tất và sẵn sàng tải về qua bộ nút bên dưới!</div>`;
+                    paneTran.innerHTML = `<div class="pane-loading">Bản dịch đã hoàn tất và sẵn sàng tải về!</div>`;
                 }
             } catch (err) {
-                paneTran.innerHTML = `<div class="pane-loading" style="color:#059669;">✓ Bản dịch đã sẵn sàng tải về qua nút bên dưới!</div>`;
+                paneTran.innerHTML = `<div class="pane-loading" style="color:#10b981;">✓ Bản dịch đã hoàn tất và sẵn sàng tải về!</div>`;
             }
         }
     },
 
-    // ── 6. SYNCHRONIZED SCROLLING & ZOOM CONTROLS ───────────────────────
     setupSyncScroll: function() {
         const p1 = document.getElementById("pane-original");
         const p2 = document.getElementById("pane-translated");
@@ -401,7 +507,7 @@ window.LuvApp = {
         const btn = document.getElementById("btn-sync-scroll");
         if (btn) {
             btn.className = this.syncScrollEnabled ? "hud-btn active" : "hud-btn";
-            btn.textContent = `🔄 Cuộn đồng bộ: ${this.syncScrollEnabled ? "BẬT" : "TẮT"}`;
+            btn.querySelector("span").textContent = `Cuộn đồng bộ: ${this.syncScrollEnabled ? "BẬT" : "TẮT"}`;
         }
     },
 
@@ -428,14 +534,15 @@ window.LuvApp = {
         }
         if (btn) {
             btn.className = this.isInlineEditing ? "hud-btn active" : "hud-btn";
-            btn.textContent = this.isInlineEditing ? "✓ Đang Sửa Nhanh" : "✏️ Sửa Nhanh";
+            btn.querySelector("span").textContent = this.isInlineEditing ? "✓ Đang Sửa Nhanh" : "Sửa Nhanh";
         }
     },
 
-    // ── 7. DOWNLOAD BUTTONS (WORD PRIORITY & CUTE PDF MODAL) ─────────────
-    downloadWord: function() {
-        if (!this.currentResults) return;
-        const url = this.currentResults.download_docx_url || this.currentResults.download_url;
+    // ── 6. INSTANT PER-FILE DOWNLOAD HANDLERS ─────────────────────────────
+    downloadFileWord: function(itemId) {
+        const item = this.fileQueue.find(f => f.id === itemId);
+        if (!item || !item.results) return;
+        const url = item.results.download_docx_url || item.results.download_url;
         if (url) {
             window.location.href = url;
         } else {
@@ -443,35 +550,38 @@ window.LuvApp = {
         }
     },
 
-    handlePdfDownload: async function() {
-        if (!this.currentResults) return;
+    handleFilePdfDownload: async function(itemId) {
+        const item = this.fileQueue.find(f => f.id === itemId);
+        if (!item || !item.results) return;
 
-        // Always open Cute Progress Modal showing the 2-3 minute reminder & animation
+        this.activeFileId = itemId;
+        this.currentViewingResults = item.results;
         this.openPdfModal();
 
-        // If PDF is already ready in results, show the cute progress and download after brief notice
-        if (this.currentResults.download_pdf_url) {
+        // If PDF already rendered, trigger download
+        if (item.results.download_pdf_url) {
             const stepReady = document.getElementById("pdf-step-ready");
             const stepRender = document.getElementById("pdf-step-rendering");
             if (stepRender) {
-                stepRender.className = "pdf-step step-done";
-                stepRender.innerHTML = `<span class="step-icon">✓</span><span class="step-text">Đã kết xuất thành công tệp PDF vector!</span>`;
+                stepRender.className = "pipeline-step step-complete";
+                stepRender.innerHTML = `<span class="step-bullet">✓</span><span class="step-label">Đã kết xuất thành công tệp PDF vector!</span>`;
             }
             if (stepReady) {
-                stepReady.className = "pdf-step step-done";
-                stepReady.innerHTML = `<span class="step-icon">✓</span><span class="step-text">Tự động tải về tệp PDF...</span>`;
+                stepReady.className = "pipeline-step step-complete";
+                stepReady.innerHTML = `<span class="step-bullet">✓</span><span class="step-label">Đang tải xuống tệp PDF...</span>`;
             }
 
             setTimeout(() => {
                 this.closePdfModal();
-                window.location.href = this.currentResults.download_pdf_url;
-            }, 1800);
+                window.location.href = item.results.download_pdf_url;
+            }, 1400);
             return;
         }
 
-        const docxFile = this.currentResults.preview_output_filename || (this.currentResults.docx_path ? this.currentResults.docx_path.split(/[\\/]/).pop() : null);
+        // On-demand PDF conversion via backend
+        const docxFile = item.results.preview_output_filename || (item.results.docx_path ? item.results.docx_path.split(/[\\/]/).pop() : null);
         if (!docxFile) {
-            alert("Chưa có bản Word dịch thuật để xuất PDF.");
+            alert("Chưa có tệp Word dịch thuật để xuất PDF.");
             this.closePdfModal();
             return;
         }
@@ -487,43 +597,48 @@ window.LuvApp = {
             const res = await resp.json();
 
             if (res.success && res.download_pdf_url) {
-                // Mark steps complete
                 const stepReady = document.getElementById("pdf-step-ready");
                 const stepRender = document.getElementById("pdf-step-rendering");
                 if (stepRender) {
-                    stepRender.className = "pdf-step step-done";
-                    stepRender.innerHTML = `<span class="step-icon">✓</span><span class="step-text">Đã kết xuất thành công tệp PDF vector!</span>`;
+                    stepRender.className = "pipeline-step step-complete";
+                    stepRender.innerHTML = `<span class="step-bullet">✓</span><span class="step-label">Đã kết xuất thành công tệp PDF vector!</span>`;
                 }
                 if (stepReady) {
-                    stepReady.className = "pdf-step step-done";
-                    stepReady.innerHTML = `<span class="step-icon">✓</span><span class="step-text">Tự động bắt đầu tải tệp PDF...</span>`;
+                    stepReady.className = "pipeline-step step-complete";
+                    stepReady.innerHTML = `<span class="step-bullet">✓</span><span class="step-label">Bắt đầu tải tệp PDF...</span>`;
                 }
 
-                this.currentResults.download_pdf_url = res.download_pdf_url;
+                item.results.download_pdf_url = res.download_pdf_url;
 
                 setTimeout(() => {
                     this.closePdfModal();
                     window.location.href = res.download_pdf_url;
-                }, 1200);
+                }, 1000);
             } else {
-                throw new Error(res.detail || "Lỗi không xác định khi xuất PDF.");
+                throw new Error(res.detail || "Không thể kết xuất PDF.");
             }
         } catch (err) {
             console.error("Lỗi xuất PDF:", err);
-            alert("Không thể kết xuất PDF tự động: " + err.message + "\nBạn vui lòng tải file Word (.docx) trước nhen!");
+            alert("Không thể kết xuất PDF tự động: " + err.message + "\nKhuyên dùng: Bạn vui lòng tải file Word (.docx) để sử dụng tức thì.");
             this.closePdfModal();
         }
     },
 
-    downloadZip: function() {
-        if (!this.currentResults) return;
-        const url = this.currentResults.download_zip_url;
-        if (url) {
-            window.location.href = url;
-        } else {
-            // Fallback: download Word
-            this.downloadWord();
-        }
+    downloadCurrentWord: function() {
+        if (!this.currentViewingResults) return;
+        const url = this.currentViewingResults.download_docx_url || this.currentViewingResults.download_url;
+        if (url) window.location.href = url;
+    },
+
+    downloadCurrentPdf: function() {
+        if (!this.activeFileId) return;
+        this.handleFilePdfDownload(this.activeFileId);
+    },
+
+    downloadCurrentZip: function() {
+        if (!this.currentViewingResults) return;
+        const url = this.currentViewingResults.download_zip_url || this.currentViewingResults.download_docx_url;
+        if (url) window.location.href = url;
     },
 
     openPdfModal: function() {
@@ -536,7 +651,7 @@ window.LuvApp = {
         if (modal) modal.style.display = "none";
     },
 
-    // ── 8. LICENSE ACTIVATION MODAL ──────────────────────────────────────
+    // ── 7. LICENSE ACTIVATION MODAL (PROFESSIONAL) ───────────────────────
     openLicenseModal: function() {
         const modal = document.getElementById("modal-license");
         if (modal) modal.style.display = "flex";
@@ -559,7 +674,7 @@ window.LuvApp = {
         const key = keyInput?.value.trim().toUpperCase() || "";
 
         if (!key) {
-            alert("Vui lòng nhập Mã Bản Quyền!");
+            alert("Vui lòng nhập Mã Bản Quyền chính thức!");
             return;
         }
 
@@ -578,30 +693,30 @@ window.LuvApp = {
 
             if (resp.ok && res.success) {
                 if (msgBox) {
-                    msgBox.className = "license-msg-box success";
+                    msgBox.className = "license-alert-box success";
                     msgBox.style.display = "block";
-                    msgBox.innerHTML = `🎉 <strong>Kích hoạt thành công!</strong><br>Gói: ${res.data?.tier || 'Vĩnh Viễn'}<br>Đăng ký cho: ${res.data?.registered_to || reg}`;
+                    msgBox.innerHTML = `✓ <strong>Kích hoạt thành công!</strong><br>Gói: ${res.data?.tier || 'Vĩnh Viễn'}<br>Đơn vị: ${res.data?.registered_to || reg}`;
                 }
 
-                // Update Header
+                // Update Header Badges
                 const trialPill = document.getElementById("trial-pill");
                 const licLabel = document.getElementById("license-header-label");
                 if (trialPill) {
-                    trialPill.className = "trial-badge trial-active";
-                    trialPill.innerHTML = `<span>👑</span><span>Bản Quyền: ${res.data?.tier || 'Vĩnh Viễn'}</span>`;
+                    trialPill.className = "badge-pill trial-badge trial-active";
+                    trialPill.innerHTML = `<span>Bản Quyền: ${res.data?.tier || 'Vĩnh Viễn'}</span>`;
                 }
                 if (licLabel) licLabel.textContent = "✓ Đã Kích Hoạt";
 
                 setTimeout(() => {
                     this.closeLicenseModal();
-                    alert("Chúc mừng bạn! Bản quyền LUV-DOC-TRAN đã được kích hoạt thành công!");
-                }, 1600);
+                    alert("Kích hoạt bản quyền thành công. Toàn bộ tính năng dịch thuật đã được mở khóa.");
+                }, 1400);
             } else {
                 throw new Error(res.detail || "Mã bản quyền không hợp lệ.");
             }
         } catch (err) {
             if (msgBox) {
-                msgBox.className = "license-msg-box error";
+                msgBox.className = "license-alert-box error";
                 msgBox.style.display = "block";
                 msgBox.textContent = "✕ " + err.message;
             }
