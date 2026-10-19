@@ -917,7 +917,7 @@ class TestTier4RealWorldScenarios(BaseLicensingTestCase):
         self.assertEqual(info.get("license_key"), OFFICIAL_GENUINE_KEY)
 
         # Check access permission
-        access = LUVLicenseClient.check_access()
+        access = LUVLicenseClient.check_access(force_online=False)
         self.assertTrue(access.get("has_access"))
         self.assertEqual(access.get("access_type"), "licensed")
 
@@ -1104,7 +1104,7 @@ class TestTier4RealWorldScenarios(BaseLicensingTestCase):
         """Verify check_access properly transitions between unactivated state and official licensed state."""
         # 1. Without license, check_access reports unactivated (mandatory key mode)
         self._remove_test_artifacts()
-        access_initial = LUVLicenseClient.check_access("DEV-TEST-STATE-MACHINE")
+        access_initial = LUVLicenseClient.check_access("DEV-TEST-STATE-MACHINE", force_online=False)
         self.assertFalse(access_initial.get("has_access"))
         self.assertEqual(access_initial.get("access_type"), "unactivated")
         self.assertIn("Chưa Kích Hoạt", access_initial.get("tier", ""))
@@ -1133,7 +1133,7 @@ class TestTier4RealWorldScenarios(BaseLicensingTestCase):
         }
         LUVLicenseClient.save_secure_license(record)
 
-        access_licensed = LUVLicenseClient.check_access("DEV-TEST-STATE-MACHINE")
+        access_licensed = LUVLicenseClient.check_access("DEV-TEST-STATE-MACHINE", force_online=False)
         self.assertTrue(access_licensed.get("has_access"))
         self.assertEqual(access_licensed.get("access_type"), "licensed")
         self.assertEqual(access_licensed.get("license_key"), OFFICIAL_GENUINE_KEY)

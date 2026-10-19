@@ -350,7 +350,7 @@ window.LuvApp = {
             if (btnText) btnText.textContent = `ĐANG DỊCH TỆP ${i + 1}/${pendingItems.length}...`;
 
             item.status = 'translating';
-            item.statusText = 'Đang phân tích bố cục...';
+            item.statusText = 'Phân tích bối cảnh tài liệu... (Vòng 1)';
             this.renderQueueTable();
 
             try {
@@ -369,20 +369,20 @@ window.LuvApp = {
                 }
 
                 let simPercent = 20;
-                item.statusText = `Đang phân tích bố cục... (${simPercent}%)`;
+                item.statusText = `Phân tích bối cảnh tài liệu... (Vòng 1) (${simPercent}%)`;
                 this.renderQueueTable();
 
                 const simInterval = setInterval(() => {
                     if (item.status === 'translating') {
-                        if (simPercent < 45) {
+                        if (simPercent < 40) {
                             simPercent += 10;
-                            item.statusText = `Đang phân tích cấu trúc & bảng biểu... (${simPercent}%)`;
-                        } else if (simPercent < 75) {
+                            item.statusText = `Phân tích bối cảnh tài liệu... (Vòng 1) (${simPercent}%)`;
+                        } else if (simPercent < 80) {
                             simPercent += 8;
-                            item.statusText = `Đang dịch song ngữ liên dòng... (${simPercent}%)`;
-                        } else if (simPercent < 92) {
+                            item.statusText = `Đang dịch song ngữ chuyên ngành... (Vòng 2) (${simPercent}%)`;
+                        } else if (simPercent < 95) {
                             simPercent += 3;
-                            item.statusText = `Đang hoàn tất và tái tạo văn bản... (${simPercent}%)`;
+                            item.statusText = `Kiểm định chất lượng & hoàn thiện tệp... (Vòng 3) (${simPercent}%)`;
                         }
                         this.renderQueueTable();
                     }

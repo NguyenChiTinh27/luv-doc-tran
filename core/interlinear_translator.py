@@ -45,6 +45,8 @@ from docx.text.paragraph import Paragraph
 from core.deepseek_ocr import DeepSeekOCR
 from core.pdf_to_word_converter import SmartPDFToWordDispatcher
 from core.ai_reconstructed_ocr import AIReconstructedOCREngine, heal_broken_vietnamese_text
+from core.context_profiler import AIContextProfiler, ContextProfile
+from core.quality_auditor import AIQualityAuditor, AuditReport
 
 
 def is_scanned_pdf(pdf_path: str, threshold_chars_per_page: int = 40) -> bool:
@@ -826,9 +828,10 @@ class InterlinearTranslator:
         api_key: str, 
         source_lang: str = "en",
         target_lang: str = "vi",
-        model: str = "DeepSeek-V4.1-Flash"
+        model: str = "DeepSeek-V4.1-Flash",
+        context_profile: Optional[ContextProfile] = None
     ) -> List[str]:
-        """Dịch danh sách các đoạn văn bản bằng DeepSeek AI JSON mode."""
+        """Dịch danh sách các đoạn văn bản bằng DeepSeek AI JSON mode tích hợp Context Anchor."""
         if not texts:
             return []
 
@@ -839,11 +842,16 @@ class InterlinearTranslator:
         protected_list = [protect_technical_tokens(t) for t in texts]
         payload_dict = {str(i): pt.text for i, pt in enumerate(protected_list)}
 
+        anchor_section = ""
+        if context_profile and hasattr(context_profile, "context_anchor") and context_profile.context_anchor:
+            anchor_section = f"\n{context_profile.context_anchor}\n"
+
         prompt_sys = (
-            f"Bạn là chuyên gia dịch thuật kỹ thuật, MSDS/SDS và tài liệu đa ngôn ngữ hàng đầu.\n"
+            f"Bạn là chuyên gia dịch thuật kỹ thuật, tài liệu chuyên ngành và đa ngôn ngữ hàng đầu.\n"
             f"Hãy dịch các mục văn bản từ {src_name} sang {tgt_name} trong JSON sau.\n"
+            f"{anchor_section}"
             "Yêu cầu tuyệt đối:\n"
-            f"1. Dịch chuẩn xác 100% thuật ngữ chuyên ngành hóa chất, an toàn, kỹ thuật sang {tgt_name}.\n"
+            f"1. Dịch chuẩn xác 100% thuật ngữ theo đúng ngữ cảnh chuyên ngành sang {tgt_name}.\n"
             "2. Trả về đúng định dạng JSON với các key giống hệt đầu vào.\n"
             "3. Không thêm giải thích, không thêm ngôn ngữ gốc vào giá trị dịch.\n"
             "4. GIỮ NGUYÊN các mã token __LUV_KEEP_XXXX__ và số hiệu CAS, công thức hóa học."
@@ -884,6 +892,8 @@ class InterlinearTranslator:
                 key = str(i)
                 raw_trans = parsed.get(key, texts[i])
                 restored = restore_technical_tokens(raw_trans, pt)
+                if context_profile:
+                    restored = AIContextProfiler.apply_glossary_to_text(texts[i], restored, context_profile)
                 results.append(restored.strip())
             return results
         except Exception as e:
@@ -976,6 +986,14 @@ class InterlinearTranslator:
         doc = Document(docx_path)
         actual_key = api_key or DeepSeekOCR.get_saved_api_key()
 
+        # ── VÒNG 1: AI CONTEXT PROFILER (Phân tích bối cảnh tài liệu chạy ngầm) ──
+        context_profile = AIContextProfiler.profile_document(
+            docx_path,
+            api_key=actual_key,
+            source_lang=source_lang,
+            target_lang=target_lang
+        )
+
         # 1. Thu thập tất cả đoạn văn trong toàn bộ tài liệu (body, tables, headers, footers)
         parts = [(doc.element.body, doc)]
         for sec in doc.sections:
@@ -1036,7 +1054,7 @@ class InterlinearTranslator:
                     "is_in_table": is_in_table
                 })
 
-        # 3. Dịch hàng loạt các đoạn văn bản độc lập
+        # ── VÒNG 2: CONTEXT-AWARE TRANSLATION (Dịch theo ngữ cảnh) ──
         translation_map: Dict[str, str] = {}
         total_unique = len(unique_to_translate)
 
@@ -1052,19 +1070,36 @@ class InterlinearTranslator:
             for i in range(0, total_unique, batch_size):
                 batch = unique_to_translate[i : i + batch_size]
                 try:
-                    translated = cls.translate_texts_deepseek(batch, actual_key, source_lang=source_lang, target_lang=target_lang)
+                    translated = cls.translate_texts_deepseek(
+                        batch,
+                        actual_key,
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                        context_profile=context_profile
+                    )
                     for src, res in zip(batch, translated):
                         translation_map[src] = res
                 except Exception:
                     rem_batch = unique_to_translate[i:]
                     translated_rem = cls.translate_texts_free(rem_batch, source_lang=source_lang, target_lang=target_lang)
                     for s, r in zip(rem_batch, translated_rem):
-                        translation_map[s] = r
+                        translation_map[s] = AIContextProfiler.apply_glossary_to_text(s, r, context_profile)
                     break
         else:
             translated_all = cls.translate_texts_free(unique_to_translate, source_lang=source_lang, target_lang=target_lang)
             for src, res in zip(unique_to_translate, translated_all):
-                translation_map[src] = res
+                translation_map[src] = AIContextProfiler.apply_glossary_to_text(src, res, context_profile)
+
+        # ── VÒNG 3: AI QUALITY AUDIT & AUTO-HEAL (Kiểm định chất lượng & Tự sửa lỗi) ──
+        translation_pairs = [(src, translation_map.get(src, "")) for src in unique_to_translate]
+        healed_translations, audit_report = AIQualityAuditor.audit_and_heal_pairs(
+            translation_pairs,
+            profile=context_profile,
+            source_lang=source_lang,
+            target_lang=target_lang
+        )
+        for src, healed in zip(unique_to_translate, healed_translations):
+            translation_map[src] = healed
 
         # 4. Ghi đè vào văn bản theo quy tắc Song ngữ xen kẽ
         is_bilingual = (output_mode.lower() == "bilingual")
@@ -1151,12 +1186,27 @@ class InterlinearTranslator:
                     parent_trPr.remove(trHeight)
 
         doc.save(output_path)
+
+        # Kiểm tra tính hợp lệ của tệp Word (.docx) đầu ra
+        file_valid, file_err = AIQualityAuditor.verify_docx_integrity(output_path)
+        audit_report.file_valid = file_valid
+        if not file_valid:
+            audit_report.file_error = file_err
+            logger.error("Cảnh báo tệp Word đầu ra lỗi cấu trúc: %s", file_err)
+
         return {
             "success": True,
             "total_items": total_unique,
             "mode": output_mode,
             "provider": provider,
-            "output_path": output_path
+            "output_path": output_path,
+            "context_profile": context_profile.to_dict(),
+            "audit_report": audit_report.to_dict(),
+            "stages_completed": [
+                "Vòng 1 (AI Context Profiler): Phân tích bối cảnh & lập hồ sơ thuật ngữ",
+                "Vòng 2 (Context-Aware Translation): Dịch song ngữ xen kẽ theo ngữ cảnh",
+                "Vòng 3 (AI Quality Audit & Auto-heal): Kiểm định chất lượng & tự sửa lỗi"
+            ]
         }
 
     @classmethod
@@ -1205,10 +1255,14 @@ class InterlinearTranslator:
         tgt_name = LANG_NAME_MAP.get(target_lang, "tiếng Việt")
         is_bilingual = (output_mode.lower() in ["bilingual", "interlinear"])
 
+        context_profile = AIContextProfiler.profile_document(pdf_path, source_lang=source_lang, target_lang=target_lang)
+        anchor_section = f"\n\n{context_profile.context_anchor}\n" if context_profile and context_profile.context_anchor else ""
+
         if is_bilingual:
             prompt = (
                 f"Bạn là chuyên gia dịch thuật kỹ thuật, MSDS/SDS hóa chất và chuyên viên phục dựng tài liệu số 1.\n"
-                f"Hãy đọc hình ảnh tài liệu này, trích xuất toàn bộ văn bản và bảng biểu, đồng thời thực hiện DỊCH SONG NGỮ XEN KẼ (Interlinear Bilingual) từ {src_name} sang {tgt_name}.\n\n"
+                f"Hãy đọc hình ảnh tài liệu này, trích xuất toàn bộ văn bản và bảng biểu, đồng thời thực hiện DỊCH SONG NGỮ XEN KẼ (Interlinear Bilingual) từ {src_name} sang {tgt_name}.\n"
+                f"{anchor_section}\n"
                 "QUY TẮC ĐỊNH DẠNG BẮT BUỘC:\n"
                 "1. ĐỐI VỚI BẢNG BIỂU (Tables):\n"
                 "   - Giữ nguyên cấu trúc bảng bằng cú pháp Markdown (| Cột 1 | Cột 2 |...).\n"
@@ -1293,6 +1347,7 @@ class InterlinearTranslator:
 
         # Tái tạo tài liệu Word Siêu Cấp VIP Pro từ nội dung AI
         AIReconstructedOCREngine.create_reconstructed_docx(pages_text, output_docx_path)
+        file_valid, file_err = AIQualityAuditor.verify_docx_integrity(output_docx_path)
 
         total_chars = sum(len(p["text"]) for p in pages_text)
         return {
@@ -1304,7 +1359,14 @@ class InterlinearTranslator:
             "source_lang": source_lang,
             "target_lang": target_lang,
             "provider": "deepseek-vision",
-            "output_path": output_docx_path
+            "output_path": output_docx_path,
+            "context_profile": context_profile.to_dict(),
+            "file_valid": file_valid,
+            "stages_completed": [
+                "Vòng 1 (AI Context Profiler): Phân tích bối cảnh & lập hồ sơ thuật ngữ",
+                "Vòng 2 (Context-Aware Translation): Dịch song ngữ xen kẽ theo ngữ cảnh",
+                "Vòng 3 (AI Quality Audit & Auto-heal): Kiểm định chất lượng & hoàn thiện tệp"
+            ]
         }
 
     @classmethod
@@ -1649,5 +1711,13 @@ class InterlinearTranslator:
         if has_doc and os.path.exists(final_doc_path):
             response_payload["doc_path"] = final_doc_path
             response_payload["download_doc_url"] = f"/api/download/{final_doc_name}"
+
+        if isinstance(trans_result, dict):
+            if "context_profile" in trans_result:
+                response_payload["context_profile"] = trans_result["context_profile"]
+            if "audit_report" in trans_result:
+                response_payload["audit_report"] = trans_result["audit_report"]
+            if "stages_completed" in trans_result:
+                response_payload["stages_completed"] = trans_result["stages_completed"]
 
         return response_payload

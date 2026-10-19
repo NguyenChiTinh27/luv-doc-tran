@@ -42,6 +42,8 @@ from core.interlinear_translator import (
     CJK_FONT_MAP,
 )
 from core.deepseek_ocr import DeepSeekOCR
+from core.context_profiler import AIContextProfiler, ContextProfile
+from core.quality_auditor import AIQualityAuditor, AuditReport
 
 
 class ExcelInterlinearTranslator:
@@ -437,6 +439,14 @@ class ExcelInterlinearTranslator:
 
         actual_key = (api_key or "").strip() or DeepSeekOCR.get_saved_api_key()
 
+        # ── VÒNG 1: AI CONTEXT PROFILER (Phân tích bối cảnh bảng tính chạy ngầm) ──
+        context_profile = AIContextProfiler.profile_document(
+            work_path,
+            api_key=actual_key,
+            source_lang=source_lang,
+            target_lang=target_lang
+        )
+
         # 2. Nạp workbook bảo toàn 100% công thức và liên kết
         is_vba = str(work_path).lower().endswith(('.xlsm', '.xltm'))
         wb = openpyxl.load_workbook(
@@ -476,15 +486,14 @@ class ExcelInterlinearTranslator:
                     if not should_translate_item(val_str):
                         continue
 
-                    # Bảo vệ mã số CAS và các token kỹ thuật
-                    protected = protect_technical_tokens(val_str)
-                    records.append((ws, row_idx, col_idx, cell, val_str, protected))
+                    # Lưu bản ghi ô cần dịch
+                    records.append((ws, row_idx, col_idx, cell, val_str))
 
-                    if protected.text not in seen_texts:
-                        seen_texts.add(protected.text)
-                        unique_to_translate.append(protected.text)
+                    if val_str not in seen_texts:
+                        seen_texts.add(val_str)
+                        unique_to_translate.append(val_str)
 
-        # 4. Dịch thuật các chuỗi văn bản độc lập
+        # ── VÒNG 2: CONTEXT-AWARE TRANSLATION (Dịch theo ngữ cảnh) ──
         trans_map: Dict[str, str] = {}
         total_unique = len(unique_to_translate)
         engine_used = "Động cơ Bảng tính Excel DOC-TRAN (openpyxl + Bing Engine)"
@@ -506,7 +515,8 @@ class ExcelInterlinearTranslator:
                         batch,
                         actual_key,
                         source_lang=source_lang,
-                        target_lang=target_lang
+                        target_lang=target_lang,
+                        context_profile=context_profile
                     )
                     for src, res in zip(batch, translated):
                         trans_map[src] = res
@@ -519,7 +529,7 @@ class ExcelInterlinearTranslator:
                         target_lang=target_lang
                     )
                     for s, r in zip(rem_batch, translated_rem):
-                        trans_map[s] = r
+                        trans_map[s] = AIContextProfiler.apply_glossary_to_text(s, r, context_profile)
                     engine_used += " (Fallback Bing)"
                     break
         else:
@@ -531,14 +541,20 @@ class ExcelInterlinearTranslator:
                     target_lang=target_lang
                 )
                 for src, res in zip(batch, translated):
-                    trans_map[src] = res
+                    trans_map[src] = AIContextProfiler.apply_glossary_to_text(src, res, context_profile)
+
+        # ── VÒNG 3: AI QUALITY AUDIT & AUTO-HEAL (Kiểm định chất lượng & Tự sửa lỗi) ──
+        translation_pairs = [(orig_text, trans_map.get(orig_text, orig_text)) for ws, row_idx, col_idx, cell, orig_text in records]
+        healed_translations, audit_report = AIQualityAuditor.audit_and_heal_pairs(
+            translation_pairs,
+            profile=context_profile,
+            source_lang=source_lang,
+            target_lang=target_lang
+        )
 
         # 5. Ghi kết quả song ngữ xen kẽ vào các ô bảng tính
         translated_count = 0
-        for ws, row_idx, col_idx, cell, orig_text, protected in records:
-            raw_trans = trans_map.get(protected.text, orig_text)
-            restored_trans = restore_technical_tokens(raw_trans, protected)
-
+        for (ws, row_idx, col_idx, cell, orig_text), restored_trans in zip(records, healed_translations):
             if restored_trans and restored_trans.strip():
                 cls.apply_interlinear_rich_text(
                     cell=cell,
@@ -560,6 +576,13 @@ class ExcelInterlinearTranslator:
         # 6. Lưu workbook hoàn chỉnh
         wb.save(abs_out)
 
+        # Kiểm tra tính hợp lệ của tệp Excel (.xlsx) đầu ra
+        file_valid, file_err = AIQualityAuditor.verify_xlsx_integrity(abs_out)
+        audit_report.file_valid = file_valid
+        if not file_valid:
+            audit_report.file_error = file_err
+            logger.error("Cảnh báo tệp Excel đầu ra lỗi cấu trúc: %s", file_err)
+
         # Dọn dẹp tệp trung gian
         for tf in temp_files_to_cleanup:
             if os.path.exists(tf):
@@ -576,12 +599,21 @@ class ExcelInterlinearTranslator:
             "output_path": abs_out,
             "filename": os.path.basename(abs_out),
             "total_sheets": len(wb.worksheets),
+            "sheet_count": len(wb.worksheets),
             "total_translatable_cells": len(records),
             "translated_cells": translated_count,
+            "total_translated_cells": translated_count,
             "engine": engine_used,
             "source_lang": source_lang,
             "target_lang": target_lang,
             "output_mode": output_mode,
+            "context_profile": context_profile.to_dict(),
+            "audit_report": audit_report.to_dict(),
+            "stages_completed": [
+                "Vòng 1 (AI Context Profiler): Phân tích bối cảnh & lập hồ sơ thuật ngữ",
+                "Vòng 2 (Context-Aware Translation): Dịch song ngữ xen kẽ theo ngữ cảnh",
+                "Vòng 3 (AI Quality Audit & Auto-heal): Kiểm định chất lượng & tự sửa lỗi"
+            ],
             "details": f"Đã dịch song ngữ ({src_str} ➔ {tgt_str}) {translated_count} ô bảng tính trên {len(wb.worksheets)} sheet. Bảo toàn 100% công thức toán học và cấu trúc ô gộp."
         }
 

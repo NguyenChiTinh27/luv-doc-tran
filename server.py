@@ -372,6 +372,9 @@ async def process_translation(
                 "download_docx_url": f"/api/download/{out_filename}",  # fallback alias
                 "preview_output_filename": out_filename,
                 "elapsed_seconds": elapsed,
+                "context_profile": res.get("context_profile"),
+                "audit_report": res.get("audit_report"),
+                "stages_completed": res.get("stages_completed"),
                 "details": f"Đã dịch song ngữ thành công {res.get('total_translated_cells', 0)} ô văn bản ({res.get('sheet_count', 1)} Sheet)."
             }
 
