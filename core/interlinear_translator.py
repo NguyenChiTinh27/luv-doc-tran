@@ -564,91 +564,6 @@ def should_translate_item(text: str) -> bool:
     return True
 
 
-def detect_script_type(text: str) -> str:
-    """
-    Xác định hệ chữ / script của chuỗi văn bản:
-    - 'cjk': Chữ Hán, Nhật (Kanji/Hiragana/Katakana), Hàn (Hangul)
-    - 'vietnamese': Chữ Quốc ngữ có dấu đặc thù tiếng Việt
-    - 'cyrillic': Tiếng Nga, v.v.
-    - 'arabic': Tiếng Ả Rập
-    - 'thai': Tiếng Thái
-    - 'greek': Tiếng Hy Lạp
-    - 'latin_accented': Chữ Latinh có dấu đặc thù châu Âu (Pháp, Đức, Tây Ban Nha...)
-    - 'latin_ascii': Chữ Latinh thuần ASCII (Tiếng Anh thông dụng)
-    - 'other': Số hoặc ký hiệu
-    """
-    clean = str(text or "").strip()
-    if not clean:
-        return "other"
-    if re.search(r"[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]", clean):
-        return "cjk"
-    # Ký tự đặc thù độc quyền tiếng Việt (dấu nón, dấu móc, dấu trăng, dấu nặng/hỏi/ngã, đ)
-    if re.search(r"[ăắằẳẵặâấầẩẫậêếềểễệôốồổỗộơớờởỡợưứừửữựđĂẮẰẲẴẶÂẤẦẨẪẬÊẾỀỂỄỆÔỐỒỔỖỘƠỚỜỞỠỢƯỨỪỬỮỰĐảãạẻẽẹỉĩịỏõọủũụỷỹỵẢÃẠẺẼẸỈĨỊỎÕỌỦŨỤỶỸỴ]", clean):
-        return "vietnamese"
-    if re.search(r"[\u0400-\u04ff]", clean):
-        return "cyrillic"
-    if re.search(r"[\u0600-\u06ff]", clean):
-        return "arabic"
-    if re.search(r"[\u0e00-\u0e7f]", clean):
-        return "thai"
-    if re.search(r"[\u0370-\u03ff]", clean):
-        return "greek"
-    # Ký tự có dấu châu Âu (Tây Ban Nha, Pháp, Đức, Bồ Đào Nha...)
-    if re.search(r"[äöüßéèêëàâùûôîïçñáíóúÄÖÜÉÈÊËÀÂÙÛÔÎÏÇÑÁÍÓÚ]", clean):
-        return "latin_accented"
-    if re.search(r"[a-zA-Z]", clean):
-        return "latin_ascii"
-    return "other"
-
-
-def is_different_language_pair(
-    text_a: str,
-    text_b: str,
-    is_b_styled_as_trans: bool = False
-) -> bool:
-    """
-    Xác định 2 chuỗi văn bản có phải là một cặp song ngữ khác ngôn ngữ hay không:
-    - Trả về True nếu:
-      1. Khác hệ chữ (Latinh vs CJK, Latinh vs Tiếng Việt có dấu, Cyrillic vs Latinh, CJK vs Tiếng Việt, v.v.)
-      2. Hoặc chuỗi b mang phong cách định dạng dòng dịch (in nghiêng, màu xanh #002060).
-    - Trả về False nếu:
-      - Một trong 2 chuỗi rỗng hoặc không cần dịch (toàn số, ký hiệu).
-      - Hai chuỗi giống hệt nhau.
-      - Cùng một ngôn ngữ thuần Latinh mà không có dấu hiệu dòng dịch.
-    """
-    clean_a = str(text_a or "").strip()
-    clean_b = str(text_b or "").strip()
-    if not clean_a or not clean_b:
-        return False
-    if clean_a.lower() == clean_b.lower():
-        return False
-    if not should_translate_item(clean_a) or not should_translate_item(clean_b):
-        return False
-
-    if is_b_styled_as_trans:
-        return True
-
-    script_a = detect_script_type(clean_a)
-    script_b = detect_script_type(clean_b)
-
-    if script_a != script_b and script_a != "other" and script_b != "other":
-        return True
-
-    return False
-
-
-def is_paragraph_styled_as_translation(p: Paragraph) -> bool:
-    """Kiểm tra đoạn văn có mang định dạng đặc trưng của dòng dịch DOC-TRAN không (in nghiêng hoặc màu xanh #002060)."""
-    for r in p.runs:
-        if r.italic:
-            return True
-        if r.font and r.font.color and r.font.color.rgb:
-            c = str(r.font.color.rgb).upper()
-            if c in ("002060", "000080", "003366", "0000FF"):
-                return True
-    return False
-
-
 def clean_paragraph_formatting(p, is_in_table=False):
     """Chuẩn hóa layout đoạn văn: xóa thụt lề cứng, lineRule auto, khoảng cách hợp lý."""
     pPr = p._p.get_or_add_pPr()
@@ -1053,31 +968,27 @@ class InterlinearTranslator:
     @classmethod
     def translate_docx(
         cls,
-        docx_path: Optional[str] = None,
-        output_path: str = "",
+        docx_path: str,
+        output_path: str,
         api_key: Optional[str] = None,
         source_lang: str = "en",
         target_lang: str = "vi",
         output_mode: str = "bilingual",  # "bilingual" hoặc "target_only" / "vietnamese_only"
         provider: str = "deepseek",
         batch_size: int = 30,
-        font_family: str = "auto",
-        input_path: Optional[str] = None
+        font_family: str = "auto"
     ) -> Dict[str, Any]:
         """
         Xử lý tài liệu Word sang định dạng Song ngữ Xen kẽ (Interlinear).
         Dòng gốc ở trên, dòng dịch màu xanh đậm #002060 nghiêng ở dưới.
         Khử toàn bộ khoảng trắng thừa bằng cách loại bỏ trHeight trong bảng.
         """
-        actual_in = docx_path or input_path
-        if not actual_in:
-            raise ValueError("Cần cung cấp docx_path hoặc input_path hợp lệ.")
-        doc = Document(actual_in)
+        doc = Document(docx_path)
         actual_key = api_key or DeepSeekOCR.get_saved_api_key()
 
         # ── VÒNG 1: AI CONTEXT PROFILER (Phân tích bối cảnh tài liệu chạy ngầm) ──
         context_profile = AIContextProfiler.profile_document(
-            actual_in,
+            docx_path,
             api_key=actual_key,
             source_lang=source_lang,
             target_lang=target_lang
@@ -1108,13 +1019,9 @@ class InterlinearTranslator:
         unique_to_translate: List[str] = []
         seen = set()
 
-        p_idx = 0
-        total_p = len(all_paras)
-        while p_idx < total_p:
-            p = all_paras[p_idx]
+        for p in all_paras:
             raw_text = p.text
             if not raw_text or not raw_text.strip():
-                p_idx += 1
                 continue
 
             # Kiểm tra xem có nằm trong bảng không
@@ -1128,63 +1035,8 @@ class InterlinearTranslator:
 
             lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
             if not lines:
-                p_idx += 1
                 continue
 
-            # Trường hợp 1: Đoạn văn nội bộ đã là song ngữ nhiều dòng (In-paragraph bilingual multiline)
-            # Ví dụ: 2 dòng (Dòng 0 Anh, Dòng 1 Trung) hoặc 4, 6... dòng theo cặp song ngữ
-            is_bilingual_multiline = (
-                len(lines) >= 2
-                and len(lines) % 2 == 0
-                and all(
-                    is_different_language_pair(lines[2 * k], lines[2 * k + 1])
-                    for k in range(len(lines) // 2)
-                )
-            )
-
-            if is_bilingual_multiline:
-                pairs = [(lines[2 * k], lines[2 * k + 1]) for k in range(len(lines) // 2)]
-                for src_line, _ in pairs:
-                    if should_translate_item(src_line) and src_line not in seen:
-                        seen.add(src_line)
-                        unique_to_translate.append(src_line)
-                para_records.append({
-                    "type": "in_para_bilingual",
-                    "para": p,
-                    "pairs": pairs,
-                    "is_in_table": is_in_table
-                })
-                p_idx += 1
-                continue
-
-            # Trường hợp 2: Hai đoạn văn liền kề là một cặp song ngữ (Adjacent bilingual paragraphs)
-            # Ví dụ: p[i] là tiếng Anh, p[i+1] là tiếng Trung/Việt cũ trong cùng một ô bảng
-            if len(lines) == 1 and (p_idx + 1 < total_p):
-                p_next = all_paras[p_idx + 1]
-                if p._p.getparent() is not None and p._p.getparent() == p_next._p.getparent():
-                    next_sibling_p = next(p._p.itersiblings(tag=qn("w:p")), None)
-                    if next_sibling_p == p_next._p:
-                        raw_next = p_next.text or ""
-                        lines_next = [l.strip() for l in raw_next.splitlines() if l.strip()]
-                        if len(lines_next) == 1:
-                            is_next_styled = is_paragraph_styled_as_translation(p_next)
-                            if is_different_language_pair(lines[0], lines_next[0], is_b_styled_as_trans=is_next_styled):
-                                src_text = lines[0]
-                                if should_translate_item(src_text) and src_text not in seen:
-                                    seen.add(src_text)
-                                    unique_to_translate.append(src_text)
-                                para_records.append({
-                                    "type": "adjacent_bilingual",
-                                    "para_src": p,
-                                    "para_target": p_next,
-                                    "src_text": src_text,
-                                    "old_target_text": lines_next[0],
-                                    "is_in_table": is_in_table
-                                })
-                                p_idx += 2
-                                continue
-
-            # Trường hợp 3: Đoạn văn đơn ngữ thông thường
             record_lines = []
             for l in lines:
                 if should_translate_item(l):
@@ -1197,12 +1049,10 @@ class InterlinearTranslator:
 
             if any(item["needs_trans"] for item in record_lines):
                 para_records.append({
-                    "type": "standard",
                     "para": p,
                     "lines": record_lines,
                     "is_in_table": is_in_table
                 })
-            p_idx += 1
 
         # ── VÒNG 2: CONTEXT-AWARE TRANSLATION (Dịch theo ngữ cảnh) ──
         translation_map: Dict[str, str] = {}
@@ -1255,85 +1105,27 @@ class InterlinearTranslator:
         is_bilingual = (output_mode.lower() == "bilingual")
 
         for rec in para_records:
-            rec_type = rec.get("type", "standard")
+            p = rec["para"]
+            lines_info = rec["lines"]
             is_in_table = rec["is_in_table"]
 
-            if rec_type == "in_para_bilingual":
-                p = rec["para"]
-                pairs = rec["pairs"]
-                orig_sz = None
-                orig_bold = False
-                for r in p.runs:
-                    if r.font.size and orig_sz is None:
-                        orig_sz = r.font.size
-                    if r.bold:
-                        orig_bold = True
+            orig_sz = None
+            orig_bold = False
+            for r in p.runs:
+                if r.font.size and orig_sz is None:
+                    orig_sz = r.font.size
+                if r.bold:
+                    orig_bold = True
 
-                for r in list(p._p.findall(qn("w:r"))):
-                    p._p.remove(r)
-
-                if is_bilingual:
-                    for idx, (src_line, old_sec_line) in enumerate(pairs):
-                        r_src = p.add_run(src_line if idx == 0 else "\n" + src_line)
-                        apply_custom_font(r_src, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=True)
-                        if orig_sz:
-                            r_src.font.size = orig_sz
-                        if orig_bold:
-                            r_src.bold = True
-
-                        trans_text = translation_map.get(src_line, "")
-                        if trans_text and trans_text != src_line:
-                            r_trans = p.add_run("\n" + trans_text)
-                            apply_custom_font(r_trans, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=False)
-                            r_trans.italic = True
-                            r_trans.font.color.rgb = DARK_BLUE
-                            if orig_sz:
-                                r_trans.font.size = orig_sz
-                            if orig_bold:
-                                r_trans.bold = True
-                else:
-                    for idx, (src_line, old_sec_line) in enumerate(pairs):
-                        trans_text = translation_map.get(src_line, src_line)
-                        r_trans = p.add_run(trans_text if idx == 0 else "\n" + trans_text)
-                        apply_custom_font(r_trans, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=False)
-                        if orig_sz:
-                            r_trans.font.size = orig_sz
-                        if orig_bold:
-                            r_trans.bold = True
-
-                clean_paragraph_formatting(p, is_in_table=is_in_table)
-
-            elif rec_type == "adjacent_bilingual":
-                p_src = rec["para_src"]
-                p_tgt = rec["para_target"]
-                src_text = rec["src_text"]
-                trans_text = translation_map.get(src_text, "")
-
-                orig_sz = None
-                orig_bold = False
-                for r in p_tgt.runs:
-                    if r.font.size and orig_sz is None:
-                        orig_sz = r.font.size
-                    if r.bold:
-                        orig_bold = True
-                if orig_sz is None:
-                    for r in p_src.runs:
-                        if r.font.size and orig_sz is None:
-                            orig_sz = r.font.size
-                        if r.bold:
-                            orig_bold = True
-
-                if is_bilingual:
-                    # Giữ nguyên p_src văn bản nguồn
-                    for r in p_src.runs:
+            if is_bilingual:
+                # Chế độ Song ngữ xen kẽ: Dòng gốc trên, dòng tiếng Việt dưới (#002060 nghiêng)
+                if len(lines_info) == 1:
+                    item = lines_info[0]
+                    trans_text = translation_map.get(item["source"], "") if item["needs_trans"] else ""
+                    for r in p.runs:
                         apply_custom_font(r, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=True)
-                    clean_paragraph_formatting(p_src, is_in_table=is_in_table)
-
-                    # Thay thế p_tgt bằng bản dịch mới tại chỗ
-                    for r in list(p_tgt._p.findall(qn("w:r"))):
-                        p_tgt._p.remove(r)
-                    if trans_text:
-                        r_trans = p_tgt.add_run(trans_text)
+                    if trans_text and trans_text != item["source"]:
+                        r_trans = p.add_run("\n" + trans_text)
                         apply_custom_font(r_trans, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=False)
                         r_trans.italic = True
                         r_trans.font.color.rgb = DARK_BLUE
@@ -1341,91 +1133,49 @@ class InterlinearTranslator:
                             r_trans.font.size = orig_sz
                         if orig_bold:
                             r_trans.bold = True
-                    clean_paragraph_formatting(p_tgt, is_in_table=is_in_table)
-                else:
-                    p_src.text = trans_text or src_text
-                    for r in p_src.runs:
-                        apply_custom_font(r, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=False)
-                        if orig_sz:
-                            r.font.size = orig_sz
-                        if orig_bold:
-                            r.bold = True
-                    clean_paragraph_formatting(p_src, is_in_table=is_in_table)
-                    for r in list(p_tgt._p.findall(qn("w:r"))):
-                        p_tgt._p.remove(r)
-                    clean_paragraph_formatting(p_tgt, is_in_table=is_in_table)
-
-            else:
-                p = rec["para"]
-                lines_info = rec["lines"]
-
-                orig_sz = None
-                orig_bold = False
-                for r in p.runs:
-                    if r.font.size and orig_sz is None:
-                        orig_sz = r.font.size
-                    if r.bold:
-                        orig_bold = True
-
-                if is_bilingual:
-                    # Chế độ Song ngữ xen kẽ: Dòng gốc trên, dòng tiếng Việt dưới (#002060 nghiêng)
-                    if len(lines_info) == 1:
-                        item = lines_info[0]
-                        trans_text = translation_map.get(item["source"], "") if item["needs_trans"] else ""
-                        for r in p.runs:
-                            apply_custom_font(r, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=True)
-                        if trans_text and trans_text != item["source"]:
-                            r_trans = p.add_run("\n" + trans_text)
-                            apply_custom_font(r_trans, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=False)
-                            r_trans.italic = True
-                            r_trans.font.color.rgb = DARK_BLUE
-                            if orig_sz:
-                                r_trans.font.size = orig_sz
-                            if orig_bold:
-                                r_trans.bold = True
-                        clean_paragraph_formatting(p, is_in_table=is_in_table)
-                    else:
-                        # Nhiều dòng: xóa và tái tạo từng dòng kèm dòng dịch
-                        for r in list(p._p.findall(qn("w:r"))):
-                            p._p.remove(r)
-
-                        for l_idx, item in enumerate(lines_info):
-                            r_src = p.add_run(item["source"] if l_idx == 0 else "\n" + item["source"])
-                            apply_custom_font(r_src, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=True)
-                            if orig_sz:
-                                r_src.font.size = orig_sz
-                            if orig_bold:
-                                r_src.bold = True
-
-                            if item["needs_trans"]:
-                                trans_text = translation_map.get(item["source"], "")
-                                if trans_text and trans_text != item["source"]:
-                                    r_trans = p.add_run("\n" + trans_text)
-                                    apply_custom_font(r_trans, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=False)
-                                    r_trans.italic = True
-                                    r_trans.font.color.rgb = DARK_BLUE
-                                    if orig_sz:
-                                        r_trans.font.size = orig_sz
-                                    if orig_bold:
-                                        r_trans.bold = True
-
-                        clean_paragraph_formatting(p, is_in_table=is_in_table)
-                else:
-                    # Chế độ Chỉ ngôn ngữ đích (Ghi đè)
-                    new_lines = []
-                    for item in lines_info:
-                        if item["needs_trans"]:
-                            new_lines.append(translation_map.get(item["source"], item["source"]))
-                        else:
-                            new_lines.append(item["source"])
-                    p.text = "\n".join(new_lines)
-                    for r in p.runs:
-                        apply_custom_font(r, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=False)
-                        if orig_sz:
-                            r.font.size = orig_sz
-                        if orig_bold:
-                            r.bold = True
                     clean_paragraph_formatting(p, is_in_table=is_in_table)
+                else:
+                    # Nhiều dòng: xóa và tái tạo từng dòng kèm dòng dịch
+                    for r in list(p._p.findall(qn("w:r"))):
+                        p._p.remove(r)
+
+                    for l_idx, item in enumerate(lines_info):
+                        r_src = p.add_run(item["source"] if l_idx == 0 else "\n" + item["source"])
+                        apply_custom_font(r_src, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=True)
+                        if orig_sz:
+                            r_src.font.size = orig_sz
+                        if orig_bold:
+                            r_src.bold = True
+
+                        if item["needs_trans"]:
+                            trans_text = translation_map.get(item["source"], "")
+                            if trans_text and trans_text != item["source"]:
+                                r_trans = p.add_run("\n" + trans_text)
+                                apply_custom_font(r_trans, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=False)
+                                r_trans.italic = True
+                                r_trans.font.color.rgb = DARK_BLUE
+                                if orig_sz:
+                                    r_trans.font.size = orig_sz
+                                if orig_bold:
+                                    r_trans.bold = True
+
+                    clean_paragraph_formatting(p, is_in_table=is_in_table)
+            else:
+                # Chế độ Chỉ ngôn ngữ đích (Ghi đè)
+                new_lines = []
+                for item in lines_info:
+                    if item["needs_trans"]:
+                        new_lines.append(translation_map.get(item["source"], item["source"]))
+                    else:
+                        new_lines.append(item["source"])
+                p.text = "\n".join(new_lines)
+                for r in p.runs:
+                    apply_custom_font(r, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=False)
+                    if orig_sz:
+                        r.font.size = orig_sz
+                    if orig_bold:
+                        r.bold = True
+                clean_paragraph_formatting(p, is_in_table=is_in_table)
 
         # 5. Tự động thu gọn bảng: Xóa trHeight để triệt tiêu 100% khoảng trắng thừa
         for tr in doc.element.xpath(".//w:tr"):
