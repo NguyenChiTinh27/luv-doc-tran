@@ -18,3 +18,5 @@ tests/create_official_license.py
 tests/query_admin_api.py
 tests/*.docx
 test_e2e_unit_output.docx
+tests/*.diagnostic.json
+tests/engine_out*
