@@ -3,19 +3,14 @@
  * ─────────────────────────────────────────────────────────────
  * Nền tảng Dịch thuật Song ngữ Đa ngữ & Đa định dạng Cao Cấp
  * Hỗ trợ Đa tệp Word, PDF & Excel • Tải về tức thì từng tệp (Word & Excel Only)
- * Review Split-View Studio • Quản lý Bản Quyền Ed25519 & Thu hồi Real-time
+ * Tinh gọn hàng đợi • Quản lý Bản Quyền Ed25519 & Thu hồi Real-time
  */
 
 window.LuvApp = {
     fileQueue: [],
-    activeFileId: null,
-    currentViewingResults: null,
     deviceId: null,
     trialRemainingSeconds: 0,
     trialTimerInterval: null,
-    syncScrollEnabled: true,
-    currentZoom: 100,
-    isInlineEditing: false,
     isProcessingBatch: false,
 
     init: async function() {
@@ -241,12 +236,9 @@ window.LuvApp = {
                 if (item.ext === '.xlsx' || item.ext === '.xls') {
                     actionsHtml = `
                         <div class="row-actions-group">
-                            <a href="${res.download_url}" class="btn-row-action btn-row-word" download>
+                            <a href="${res.download_url}" class="btn-row-action btn-row-excel" download>
                                 📊 Tải Excel (.xlsx)
                             </a>
-                            <button type="button" class="btn-row-action btn-row-view" onclick="window.LuvApp.viewSplitStudio('${item.id}')">
-                                🔍 So Sánh
-                            </button>
                         </div>
                     `;
                 } else {
@@ -255,9 +247,6 @@ window.LuvApp = {
                         <div class="row-actions-group">
                             <button type="button" class="btn-row-action btn-row-word" onclick="window.LuvApp.downloadFileWord('${item.id}')" title="Tải Word xử lý tức thì">
                                 ⚡ Tải Word (.docx)
-                            </button>
-                            <button type="button" class="btn-row-action btn-row-view" onclick="window.LuvApp.viewSplitStudio('${item.id}')" title="Xem trước tài liệu">
-                                🔍 So Sánh
                             </button>
                         </div>
                     `;
@@ -302,8 +291,6 @@ window.LuvApp = {
         if (this.isProcessingBatch) return;
         this.fileQueue = [];
         this.renderQueueTable();
-        const studio = document.getElementById("split-view-studio");
-        if (studio) studio.style.display = "none";
     },
 
     getFileIconSvg: function(ext) {
@@ -434,11 +421,6 @@ window.LuvApp = {
 
                 this.showToast(`Đã dịch xong "${item.name}". Bạn có thể tải ngay!`, 'success');
 
-                // If first completed item, open Split-View
-                if (i === 0) {
-                    this.viewSplitStudio(item.id);
-                }
-
             } catch (err) {
                 console.error("Lỗi dịch tệp:", item.name, err);
                 item.status = 'error';
@@ -454,138 +436,7 @@ window.LuvApp = {
         if (btnText) btnText.textContent = "BẮT ĐẦU DỊCH TẤT CẢ TỆP";
     },
 
-    // ── 5. REVIEW SPLIT-VIEW STUDIO (SIDE-BY-SIDE) ───────────────────────
-    viewSplitStudio: async function(itemId) {
-        const item = this.fileQueue.find(f => f.id === itemId);
-        if (!item || !item.results) return;
-
-        this.activeFileId = itemId;
-        this.currentViewingResults = item.results;
-
-        const studio = document.getElementById("split-view-studio");
-        const docName = document.getElementById("hud-doc-name");
-        const paneOrig = document.getElementById("pane-original");
-        const paneTran = document.getElementById("pane-translated");
-        const dlTitle = document.getElementById("studio-dl-title");
-
-        if (studio) {
-            studio.style.display = "block";
-            studio.scrollIntoView({ behavior: "smooth" });
-        }
-
-        if (docName) docName.textContent = item.name;
-
-        // Update studio download button label
-        if (dlTitle) {
-            if (item.ext === '.xlsx' || item.ext === '.xls') {
-                dlTitle.textContent = "TẢI FILE EXCEL (.XLSX)";
-            } else {
-                dlTitle.textContent = "TẢI FILE WORD (.DOCX)";
-            }
-        }
-
-        if (paneOrig) paneOrig.innerHTML = `<div class="pane-loading"><span class="spinner-mini"></span> Đang nạp bản gốc...</div>`;
-        if (paneTran) paneTran.innerHTML = `<div class="pane-loading"><span class="spinner-mini"></span> Đang nạp bản dịch song ngữ...</div>`;
-
-        // Load preview of original
-        try {
-            const formData = new FormData();
-            formData.append("file", item.file);
-            const respOrig = await fetch("/api/preview/upload", {
-                method: "POST",
-                body: formData
-            });
-            const resOrig = await respOrig.json();
-            if (resOrig.success && resOrig.html) {
-                if (paneOrig) paneOrig.innerHTML = resOrig.html;
-            } else {
-                if (paneOrig) paneOrig.innerHTML = `<div class="pane-loading">Không thể hiển thị bản xem trước gốc.</div>`;
-            }
-        } catch (e) {
-            if (paneOrig) paneOrig.innerHTML = `<div class="pane-loading">Lỗi xem trước tệp gốc.</div>`;
-        }
-
-        // Load preview of translated document
-        try {
-            const outFilename = item.results.preview_output_filename || (item.results.docx_path ? item.results.docx_path.split(/[\\/]/).pop() : null);
-            if (outFilename) {
-                const respTran = await fetch(`/api/preview/output/${encodeURIComponent(outFilename)}`);
-                const resTran = await respTran.json();
-                if (resTran.success && resTran.html) {
-                    if (paneTran) paneTran.innerHTML = resTran.html;
-                } else {
-                    if (paneTran) paneTran.innerHTML = `<div class="pane-loading">Bản dịch đã hoàn tất. Bạn có thể tải ngay tệp bên dưới.</div>`;
-                }
-            }
-        } catch (e) {
-            if (paneTran) paneTran.innerHTML = `<div class="pane-loading">Bản dịch đã hoàn tất. Bạn có thể tải ngay tệp bên dưới.</div>`;
-        }
-
-        this.bindSynchronizedScroll();
-    },
-
-    bindSynchronizedScroll: function() {
-        const p1 = document.getElementById("pane-original");
-        const p2 = document.getElementById("pane-translated");
-        if (!p1 || !p2) return;
-
-        let isSyncingLeft = false;
-        let isSyncingRight = false;
-
-        p1.onscroll = () => {
-            if (!this.syncScrollEnabled || isSyncingLeft) return;
-            isSyncingRight = true;
-            const percentage = p1.scrollTop / (p1.scrollHeight - p1.clientHeight || 1);
-            p2.scrollTop = percentage * (p2.scrollHeight - p2.clientHeight);
-            setTimeout(() => { isSyncingRight = false; }, 40);
-        };
-
-        p2.onscroll = () => {
-            if (!this.syncScrollEnabled || isSyncingRight) return;
-            isSyncingLeft = true;
-            const percentage = p2.scrollTop / (p2.scrollHeight - p2.clientHeight || 1);
-            p1.scrollTop = percentage * (p1.scrollHeight - p1.clientHeight);
-            setTimeout(() => { isSyncingLeft = false; }, 40);
-        };
-    },
-
-    toggleSyncScroll: function() {
-        this.syncScrollEnabled = !this.syncScrollEnabled;
-        const btn = document.getElementById("btn-sync-scroll");
-        if (btn) {
-            btn.className = this.syncScrollEnabled ? "hud-btn active" : "hud-btn";
-            btn.querySelector("span").textContent = `Cuộn đồng bộ: ${this.syncScrollEnabled ? "BẬT" : "TẮT"}`;
-        }
-    },
-
-    zoomChange: function(delta) {
-        this.currentZoom = Math.max(60, Math.min(180, this.currentZoom + delta));
-        const lbl = document.getElementById("zoom-level-label");
-        if (lbl) lbl.textContent = this.currentZoom + "%";
-
-        const p1 = document.getElementById("pane-original");
-        const p2 = document.getElementById("pane-translated");
-        const scale = this.currentZoom / 100;
-
-        if (p1) p1.style.zoom = scale;
-        if (p2) p2.style.zoom = scale;
-    },
-
-    toggleInlineEdit: function() {
-        this.isInlineEditing = !this.isInlineEditing;
-        const p2 = document.getElementById("pane-translated");
-        const btn = document.getElementById("btn-inline-edit");
-        if (p2) {
-            p2.contentEditable = this.isInlineEditing ? "true" : "false";
-            p2.style.outline = this.isInlineEditing ? "2px dashed #06b6d4" : "none";
-        }
-        if (btn) {
-            btn.className = this.isInlineEditing ? "hud-btn active" : "hud-btn";
-            btn.querySelector("span").textContent = this.isInlineEditing ? "✓ Đang Sửa Nhanh" : "Sửa Nhanh";
-        }
-    },
-
-    // ── 6. INSTANT PER-FILE DOWNLOAD HANDLERS (WORD & EXCEL ONLY) ─────────
+    // ── 5. INSTANT PER-FILE DOWNLOAD HANDLERS (WORD & EXCEL ONLY) ─────────
     downloadFileWord: function(itemId) {
         const item = this.fileQueue.find(f => f.id === itemId);
         if (!item || !item.results) return;
@@ -597,10 +448,15 @@ window.LuvApp = {
         }
     },
 
-    downloadCurrentActiveFile: function() {
-        if (!this.currentViewingResults) return;
-        const url = this.currentViewingResults.download_docx_url || this.currentViewingResults.download_url;
-        if (url) window.location.href = url;
+    downloadFileExcel: function(itemId) {
+        const item = this.fileQueue.find(f => f.id === itemId);
+        if (!item || !item.results) return;
+        const url = item.results.download_url || item.results.download_docx_url;
+        if (url) {
+            window.location.href = url;
+        } else {
+            this.showToast("Không tìm thấy đường dẫn tải tệp Excel.", "error");
+        }
     },
 
     downloadAllCompleted: async function() {
@@ -612,9 +468,9 @@ window.LuvApp = {
 
         const filenames = [];
         completedItems.forEach(item => {
-            const fname = item.results.preview_output_filename ||
-                          item.results.filename ||
-                          (item.results.docx_path ? item.results.docx_path.split(/[\\/]/).pop() : null);
+            const fname = item.results.filename ||
+                          (item.results.docx_path ? item.results.docx_path.split(/[\\/]/).pop() : null) ||
+                          item.results.preview_output_filename;
             if (fname && !filenames.includes(fname)) {
                 filenames.push(fname);
             }
