@@ -1536,7 +1536,8 @@ class InterlinearTranslator:
                     source_lang=source_lang,
                     target_lang=target_lang,
                     output_mode=output_mode,
-                    provider=provider
+                    provider=provider,
+                    font_family=font_family
                 )
         elif ext in [".xlsx", ".xls"]:
             from core.excel_interlinear_translator import ExcelInterlinearTranslator
