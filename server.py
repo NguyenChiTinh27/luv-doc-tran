@@ -380,6 +380,38 @@ async def process_translation(
 
         # Case B: Word (.docx, .doc) or PDF (.pdf)
         else:
+            # For PDF files in auto / hybrid mode, utilize the 5-Phase End-to-End Engine
+            if ext == ".pdf" and engine_mode != "ocr_scan":
+                try:
+                    from src.engine import run_pipeline, EngineConfig
+                    out_filename = f"{base_name}_SongNgu_{uuid.uuid4().hex[:6]}.docx"
+                    out_path = os.path.join(OUTPUT_DIR, out_filename)
+                    config = EngineConfig(
+                        engine="offline" if actual_provider in ["neural", "offline"] or not effective_api_key else "deepseek",
+                        api_key=effective_api_key,
+                        enable_visual_qa=False  # Web API: fast and lightweight
+                    )
+                    out_res_path, gate_res = run_pipeline(input_path=saved_path, output_path=out_path, config=config)
+                    docx_file = os.path.basename(out_res_path)
+                    elapsed = round(time.time() - start_time, 2)
+                    return {
+                        "success": True,
+                        "primary_format": "docx",
+                        "docx_path": out_res_path,
+                        "filename": docx_file,
+                        "download_docx_url": f"/api/download/{docx_file}",
+                        "download_url": f"/api/download/{docx_file}",
+                        "preview_output_filename": docx_file,
+                        "elapsed_seconds": elapsed,
+                        "engine_used": "End-to-End 5-Phase Hybrid Geometry-to-OpenXML Engine",
+                        "audit_gate_passed": gate_res.passed,
+                        "audit_report": gate_res.json_report.get("audit_metrics", {}),
+                        "word_priority_note": "Word (.docx) đã sẵn sàng để tải về và chỉnh sửa tức thì.",
+                        "details": f"Đã chuyển đổi và dịch song ngữ hoàn hảo qua 5-Phase Engine (Audit: {'PASS' if gate_res.passed else 'FAIL'})."
+                    }
+                except Exception as ex_eng:
+                    logger.warning("5-Phase Engine fallback to InterlinearTranslator: %s", ex_eng)
+
             # Word (.docx) is the exclusive output format for both Word and PDF inputs
             res = InterlinearTranslator.process_interlinear_suite(
                 input_path=saved_path,
