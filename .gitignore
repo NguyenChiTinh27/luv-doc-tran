@@ -16,3 +16,5 @@ data/license.sec*
 created_license.json
 tests/create_official_license.py
 tests/query_admin_api.py
+tests/*.docx
+test_e2e_unit_output.docx
