@@ -40,7 +40,7 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 
 # Import Core Translation and Licensing modules
 from core.license_client import LUVLicenseClient
-from core.interlinear_translator import InterlinearTranslator, convert_doc_to_docx
+from core.interlinear_translator import InterlinearTranslator, convert_doc_to_docx, convert_docx_to_pdf
 from core.excel_interlinear_translator import ExcelInterlinearTranslator
 from core.deepseek_ocr import DeepSeekOCR
 
@@ -150,15 +150,24 @@ def get_trial_status(device_id: str = ""):
 
 
 @app.get("/api/license/status")
-def get_license_status(device_id: str = ""):
+def get_license_status(device_id: str = "", key: str = ""):
     """Get stored license activation state with real-time Cloudflare Worker validation."""
     try:
-        status = LUVLicenseClient.validate_license(device_id=device_id)
+        clean_key = (key or "").strip()
+        # If server does not have an active license but client passed key from localStorage, auto-sync!
+        current_info = LUVLicenseClient.get_license_info()
+        if not current_info.get("is_active") and clean_key:
+            try:
+                LUVLicenseClient.activate_key(clean_key, registered_to="Người Dùng Bản Quyền", client_device_hint=device_id)
+            except Exception as ex:
+                logger.warning("Auto-activation from status query failed: %s", ex)
+
+        status = LUVLicenseClient.validate_license(device_id=device_id, force_online=True)
         if status.get("revoked"):
             return {
                 "is_active": False,
                 "revoked": True,
-                "message": "Giấy phép đã bị thu hồi trên máy chủ D1. Vui lòng liên hệ quản trị viên."
+                "message": "Key kích hoạt đã bị thu hồi trên máy chủ D1. Vui lòng liên hệ quản trị viên."
             }
         return status
     except Exception as e:
@@ -174,10 +183,14 @@ def get_license_status(device_id: str = ""):
 
 
 @app.post("/api/license/activate")
-def activate_license(key: str = Form(...), registered_to: str = Form("Người Dùng Bản Quyền")):
+def activate_license(
+    key: str = Form(...),
+    registered_to: str = Form("Người Dùng Bản Quyền"),
+    device_id: str = Form("")
+):
     """Activate license key on this instance."""
     try:
-        record = LUVLicenseClient.activate_key(key, registered_to)
+        record = LUVLicenseClient.activate_key(key, registered_to, client_device_hint=device_id)
         return {"success": True, "message": "Key kích hoạt đã được xác thực thành công!", "data": record}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -277,7 +290,8 @@ async def process_translation(
     provider: str = Form("neural"),
     engine_mode: str = Form("auto"),
     api_key: Optional[str] = Form(None),
-    device_id: str = Form("")
+    device_id: str = Form(""),
+    license_key: Optional[str] = Form(None)
 ):
     """
     Main Bilingual Interlinear Translation Engine:
@@ -286,21 +300,19 @@ async def process_translation(
     - Supports Word (.docx, .doc), PDF (auto-converted to docx), and Excel (.xlsx, .xls).
     """
     actual_provider = "deepseek" if provider in ["neural", "deepseek"] else provider
+    clean_key = (license_key or "").strip()
 
-    # 1. Real-time license validation & revocation check
-    lic_status = LUVLicenseClient.validate_license(client_device_hint=device_id, device_id=device_id)
-    if lic_status.get("revoked"):
-        return JSONResponse(
-            status_code=403,
-            content={
-                "success": False,
-                "revoked": True,
-                "message": "Key kích hoạt đã bị thu hồi trên máy chủ D1. Vui lòng liên hệ quản trị viên."
-            }
-        )
+    # 1. Access Control Check (Local cryptographic Ed25519 verification)
+    access = LUVLicenseClient.check_access(device_id=device_id, force_online=False)
 
-    # 2. Access Control Check (Mandatory License Key)
-    access = LUVLicenseClient.check_access(device_id=device_id, validated_license=lic_status)
+    # If server has no active license on disk, but client passed key from localStorage, auto-activate!
+    if not access.get("has_access") and clean_key:
+        try:
+            LUVLicenseClient.activate_key(clean_key, registered_to="Người Dùng Bản Quyền", client_device_hint=device_id)
+            access = LUVLicenseClient.check_access(device_id=device_id, force_online=False)
+        except Exception as ex:
+            logger.warning("Auto-activation during translate failed: %s", ex)
+
     if access.get("revoked"):
         return JSONResponse(
             status_code=403,
@@ -310,7 +322,7 @@ async def process_translation(
                 "message": "Key kích hoạt đã bị thu hồi trên máy chủ D1. Vui lòng liên hệ quản trị viên."
             }
         )
-    if not access["has_access"]:
+    if not access.get("has_access"):
         return JSONResponse(
             status_code=403,
             content={
@@ -344,7 +356,7 @@ async def process_translation(
                 output_path=out_path,
                 source_lang=source_lang,
                 target_lang=target_lang,
-                provider=provider,
+                provider=actual_provider,
                 api_key=effective_api_key
             )
 
@@ -370,7 +382,7 @@ async def process_translation(
                 source_lang=source_lang,
                 target_lang=target_lang,
                 output_mode=output_mode,
-                provider=provider,
+                provider=actual_provider,
                 engine_mode=engine_mode,
                 output_format="docx",
                 api_key=effective_api_key

@@ -580,8 +580,10 @@ class BingTranslatorEngine:
         clean = (text or "").strip()
         if not clean:
             return ""
+        eff_src = "auto-detect" if (src or "").lower() in ["auto", "auto-detect", ""] else ("zh-Hans" if (src or "").lower() in ["zh", "cn"] else src)
+        eff_tgt = "zh-Hans" if (tgt or "").lower() in ["zh", "cn"] else tgt
         post_url = f"https://www.bing.com/ttranslatev3?isVertical=1&IG={cls._ig}&IID={cls._iid}"
-        data = {'fromLang': src, 'text': clean, 'to': tgt, 'token': cls._token, 'key': cls._key}
+        data = {'fromLang': eff_src, 'text': clean, 'to': eff_tgt, 'token': cls._token, 'key': cls._key}
         try:
             res = cls._session.post(post_url, data=data, timeout=6)
             if res.status_code == 200:
@@ -598,9 +600,11 @@ class BingTranslatorEngine:
         if not chunk:
             return []
 
+        eff_src = "auto-detect" if (src or "").lower() in ["auto", "auto-detect", ""] else ("zh-Hans" if (src or "").lower() in ["zh", "cn"] else src)
+        eff_tgt = "zh-Hans" if (tgt or "").lower() in ["zh", "cn"] else tgt
         post_url = f"https://www.bing.com/ttranslatev3?isVertical=1&IG={cls._ig}&IID={cls._iid}"
         joined = cls.DELIMITER.join(item[1] for item in chunk)
-        data = {'fromLang': src, 'text': joined, 'to': tgt, 'token': cls._token, 'key': cls._key}
+        data = {'fromLang': eff_src, 'text': joined, 'to': eff_tgt, 'token': cls._token, 'key': cls._key}
 
         for attempt in range(2):
             try:
@@ -639,6 +643,8 @@ class BingTranslatorEngine:
     def translate_texts(cls, texts: List[str], src: str = "en", tgt: str = "vi") -> List[str]:
         if not texts:
             return []
+        eff_src = "auto-detect" if (src or "").lower() in ["auto", "auto-detect", ""] else ("zh-Hans" if (src or "").lower() in ["zh", "cn"] else src)
+        eff_tgt = "zh-Hans" if (tgt or "").lower() in ["zh", "cn"] else tgt
         if not cls._session:
             cls._init_session()
 
@@ -650,7 +656,7 @@ class BingTranslatorEngine:
             if not clean_t:
                 final_map[i] = ""
                 continue
-            cache_key = (src, tgt, clean_t)
+            cache_key = (eff_src, eff_tgt, clean_t)
             if cache_key in cls._CACHE:
                 final_map[i] = cls._CACHE[cache_key]
             else:
@@ -703,7 +709,7 @@ class BingTranslatorEngine:
         workers = min(6, max(2, len(chunks)))
 
         def worker(chunk):
-            return cls._translate_chunk(chunk, src, tgt, protected_map)
+            return cls._translate_chunk(chunk, eff_src, eff_tgt, protected_map)
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             chunk_results = list(pool.map(worker, chunks))
@@ -717,7 +723,7 @@ class BingTranslatorEngine:
             pieces = trans_by_orig.get(orig_idx, [])
             res_str = " ".join(pieces).strip() if pieces else texts[orig_idx]
             final_map[orig_idx] = res_str
-            cls._CACHE[(src, tgt, texts[orig_idx].strip())] = res_str
+            cls._CACHE[(eff_src, eff_tgt, texts[orig_idx].strip())] = res_str
 
         return [final_map[i] for i in range(len(texts))]
 
@@ -729,6 +735,11 @@ class InterlinearTranslator:
 
     DEFAULT_MODEL = "DeepSeek-V4.1-Flash"
     FALLBACK_MODEL = "deepseek-chat"
+
+    @classmethod
+    def _convert_docx_to_pdf_vector(cls, docx_path: str, pdf_path: str) -> str:
+        """Xuất tệp PDF vector từ tài liệu DOCX."""
+        return convert_docx_to_pdf(docx_path, pdf_path)
 
     @classmethod
     def translate_texts_deepseek(
@@ -817,7 +828,7 @@ class InterlinearTranslator:
 
         # 1. Thử nghiệm Bing Translator Engine Chuyên sâu
         try:
-            b_src = "zh-Hans" if source_lang.lower() in ["zh", "cn"] else source_lang.lower()
+            b_src = "auto-detect" if source_lang.lower() in ["auto", "auto-detect", ""] else ("zh-Hans" if source_lang.lower() in ["zh", "cn"] else source_lang.lower())
             b_tgt = "zh-Hans" if target_lang.lower() in ["zh", "cn"] else target_lang.lower()
             bing_res = BingTranslatorEngine.translate_texts(texts, src=b_src, tgt=b_tgt)
             if bing_res and len(bing_res) == len(texts) and any(r != t for r, t in zip(bing_res, texts)):
@@ -825,28 +836,30 @@ class InterlinearTranslator:
         except Exception:
             pass
 
-        # 2. Tầng Dự phòng Siêu Tốc: Google Translate Engine
+        # 2. Tầng Dự phòng Siêu Tốc: Google Translate Engine (Multi-threaded Parallel)
         try:
             import urllib.request
             import urllib.parse
             g_src = GOOGLE_LANG_MAP.get(source_lang.lower(), source_lang.lower())
             g_tgt = GOOGLE_LANG_MAP.get(target_lang.lower(), target_lang.lower())
-            g_results = []
-            for t in texts:
-                clean_t = (t or "").strip()
+
+            def _translate_single_google(t_str: str) -> str:
+                clean_t = (t_str or "").strip()
                 if not clean_t:
-                    g_results.append("")
-                    continue
+                    return ""
                 try:
                     q = urllib.parse.quote(clean_t)
                     url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={g_src}&tl={g_tgt}&dt=t&q={q}"
-                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
                     with urllib.request.urlopen(req, timeout=5) as resp:
                         data = json.loads(resp.read().decode("utf-8"))
-                        g_results.append("".join(item[0] for item in data[0] if item[0]))
+                        return "".join(item[0] for item in data[0] if item[0])
                 except Exception:
-                    g_results.append(clean_t)
-            if g_results and len(g_results) == len(texts):
+                    return clean_t
+
+            with ThreadPoolExecutor(max_workers=min(8, max(2, len(texts)))) as pool:
+                g_results = list(pool.map(_translate_single_google, texts))
+            if g_results and len(g_results) == len(texts) and any(r != t for r, t in zip(g_results, texts)):
                 return g_results
         except Exception:
             pass
@@ -1488,23 +1501,32 @@ class InterlinearTranslator:
         except Exception as e:
             logger.warning("Không thể xuất thêm định dạng .doc: %s", e)
 
-        # Artifact 2: File PDF (.pdf) chuyển ngược từ final_docx_path bảo toàn #002060, italic, bảng biểu
+        out_fmt = (output_format or "docx").lower().strip()
+
+        # Artifact 2: File PDF (.pdf) chuyển ngược từ final_docx_path (chỉ tạo khi người dùng yêu cầu)
         final_pdf_name = f"{base_name}_SongNgu_{session_id}.pdf"
         final_pdf_path = os.path.join(output_dir, final_pdf_name)
-        convert_docx_to_pdf(final_docx_path, final_pdf_path)
-
-        # Artifact 3: File ZIP (.zip) đóng gói cả Word (.docx, .doc) và PDF (.pdf)
         zip_name = f"{base_name}_SongNgu_TronBo_{session_id}.zip"
         zip_path = os.path.join(output_dir, zip_name)
-        with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.write(final_docx_path, arcname=final_docx_name)
-            if os.path.exists(final_pdf_path):
-                zf.write(final_pdf_path, arcname=final_pdf_name)
-            if has_doc and os.path.exists(final_doc_path):
-                zf.write(final_doc_path, arcname=final_doc_name)
+
+        if out_fmt in ["pdf", "both"]:
+            try:
+                convert_docx_to_pdf(final_docx_path, final_pdf_path)
+            except Exception as e:
+                logger.warning("PDF conversion skipped: %s", e)
+
+            # Artifact 3: File ZIP (.zip) đóng gói cả Word (.docx, .doc) và PDF (.pdf)
+            try:
+                with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+                    zf.write(final_docx_path, arcname=final_docx_name)
+                    if os.path.exists(final_pdf_path):
+                        zf.write(final_pdf_path, arcname=final_pdf_name)
+                    if has_doc and os.path.exists(final_doc_path):
+                        zf.write(final_doc_path, arcname=final_doc_name)
+            except Exception as e:
+                logger.warning("ZIP creation skipped: %s", e)
 
         # 5. Thiết lập phản hồi đa định dạng theo yêu cầu người dùng
-        out_fmt = (output_format or "docx").lower().strip()
         if out_fmt == "pdf":
             primary_filename = final_pdf_name
             primary_output_path = final_pdf_path

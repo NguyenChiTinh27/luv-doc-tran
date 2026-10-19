@@ -139,10 +139,16 @@ class LUVLicenseClient:
     _is_revoked: bool = False
     _cached_claims: Optional[Dict[str, Any]] = None
     _license_lock: threading.Lock = threading.Lock()
+    _last_online_validation_time: float = 0.0
+    _last_online_validation_result: Optional[Dict[str, Any]] = None
+    _online_cache_ttl: float = 600.0  # 10 minutes cache
 
     @classmethod
     def save_secure_license(cls, record: Dict[str, Any]) -> None:
         """Save license record securely to data/license.sec using platform protection."""
+        with cls._license_lock:
+            cls._last_online_validation_time = 0.0
+            cls._last_online_validation_result = None
         os.makedirs(DATA_DIR, exist_ok=True)
         raw_bytes = json.dumps(record, ensure_ascii=False, indent=2).encode("utf-8")
         protected_bytes = _protect_data(raw_bytes)
@@ -456,6 +462,8 @@ class LUVLicenseClient:
         with cls._license_lock:
             cls._is_revoked = True
             cls._cached_claims = None
+            cls._last_online_validation_time = 0.0
+            cls._last_online_validation_result = None
             target_files = [
                 LICENSE_FILE,
                 LICENSE_FILE + ".tmp",
@@ -700,7 +708,7 @@ class LUVLicenseClient:
                 raw_tier = data.get("tier") or f"Key Kích Hoạt ({plan_name})"
                 clean_tier = re.sub(r'(?i)doanh\s*nghiệp', 'Key Kích Hoạt', raw_tier) if "doanh nghiệp" in raw_tier.lower() else raw_tier
                 cust_clean = re.sub(r'(?i)doanh\s*nghiệp', 'Người Dùng', customer_name) if "doanh nghiệp" in customer_name.lower() else customer_name
-                return {
+                result_payload = {
                     "is_active": True,
                     "revoked": False,
                     "status": "active",
@@ -713,8 +721,11 @@ class LUVLicenseClient:
                     "features": renewed_claims.get("features", data.get("features", [])),
                     "lease_seq": renewed_claims.get("lease_seq")
                 }
+                cls._last_online_validation_time = time.time()
+                cls._last_online_validation_result = dict(result_payload)
+                return result_payload
 
-            # Handle HTTP errors from server (revoked / denied / unregistered)
+            # Handle HTTP errors from server (revoked / denied / quota exceeded)
             if isinstance(last_http_error, urllib.error.HTTPError):
                 code = last_http_error.code
                 err_code = ""
@@ -722,12 +733,27 @@ class LUVLicenseClient:
                 try:
                     parsed = json.loads(raw_err) if raw_err else {}
                     err_code = parsed.get("error", "")
-                    err_msg = parsed.get("message") or "Giấy phép bản quyền đã bị thu hồi bởi Quản trị viên."
+                    err_msg = parsed.get("message") or "Key kích hoạt đã bị thu hồi bởi Quản trị viên."
                 except Exception:
-                    err_msg = "Giấy phép bản quyền đã bị thu hồi bởi Quản trị viên."
+                    err_msg = "Key kích hoạt đã bị thu hồi bởi Quản trị viên."
 
-                # HTTP 400/401/403/404 or license_denied / device_not_registered
-                if code in [400, 401, 403, 404] or err_code in ["license_denied", "device_not_registered", "revoked"]:
+                # Device quota exceeded: do not purge license, return device quota status
+                if err_code == "device_quota_exceeded":
+                    return {
+                        "is_active": False,
+                        "valid": False,
+                        "revoked": False,
+                        "status": "device_quota_exceeded",
+                        "tier": "Vượt Quá Số Lượng Thiết Bị",
+                        "registered_to": None,
+                        "customer": None,
+                        "license_key": data.get("license_key"),
+                        "error": "device_quota_exceeded",
+                        "message": err_msg or "Key kích hoạt đã đạt tối đa số lượng thiết bị cho phép. Vui lòng nâng cấp gói hoặc gỡ bớt thiết bị cũ."
+                    }
+
+                # Revocation on HTTP 401, 403, 404 or license_denied / device_not_registered / revoked
+                if code in [401, 403, 404] or err_code in ["license_denied", "device_not_registered", "revoked", "license_revoked"]:
                     cls.purge_license()
                     trials = cls._read_trials()
                     if dev_id:
@@ -746,7 +772,7 @@ class LUVLicenseClient:
                         "customer": None,
                         "license_key": None,
                         "error": err_code or "license_denied",
-                        "message": err_msg or "Giấy phép bản quyền đã bị thu hồi bởi Quản trị viên."
+                        "message": err_msg or "Key kích hoạt đã bị thu hồi bởi Quản trị viên."
                     }
 
             # Handle Network Outage (URLError or connection error)
@@ -823,7 +849,8 @@ class LUVLicenseClient:
     def check_access(
         cls,
         device_id: str = "",
-        validated_license: Optional[Dict[str, Any]] = None
+        validated_license: Optional[Dict[str, Any]] = None,
+        force_online: bool = True
     ) -> Dict[str, Any]:
         """
         Kiểm tra quyền dịch thuật của máy trạm:
@@ -854,7 +881,7 @@ class LUVLicenseClient:
             lic = validated_license
         else:
             try:
-                lic = cls.validate_license(device_id=clean_dev, force_online=True)
+                lic = cls.validate_license(device_id=clean_dev, force_online=force_online)
             except Exception:
                 lic = cls.get_license_info()
 

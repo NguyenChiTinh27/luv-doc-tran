@@ -53,8 +53,10 @@ window.LuvApp = {
         const dropWarning = document.getElementById("dropzone-key-warning");
 
         try {
-            // A. Check License status with Cloudflare Worker Real-time Validation
-            const licResp = await fetch(`/api/license/status?device_id=${encodeURIComponent(this.deviceId)}`);
+            const savedKey = localStorage.getItem("luv_license_key") || "";
+            // A. Check License status with local cache & auto-sync
+            const url = `/api/license/status?device_id=${encodeURIComponent(this.deviceId)}&key=${encodeURIComponent(savedKey)}`;
+            const licResp = await fetch(url);
             const licData = await licResp.json();
 
             if (licData.is_active) {
@@ -70,6 +72,7 @@ window.LuvApp = {
             // B. If Key was revoked on Cloudflare D1
             if (licData.revoked) {
                 this.isLicensed = false;
+                localStorage.removeItem("luv_license_key");
                 if (trialPill) trialPill.className = "badge-pill key-badge key-revoked";
                 if (trialText) trialText.textContent = "Key Đã Bị Thu Hồi";
                 if (licLabel) licLabel.textContent = "✕ Key Bị Khóa";
@@ -359,6 +362,7 @@ window.LuvApp = {
             this.renderQueueTable();
 
             try {
+                const savedKey = localStorage.getItem("luv_license_key") || "";
                 const formData = new FormData();
                 formData.append("file", item.file);
                 formData.append("source_lang", sourceLang);
@@ -367,15 +371,29 @@ window.LuvApp = {
                 formData.append("engine_mode", "auto");
                 formData.append("output_mode", "bilingual");
                 formData.append("device_id", this.deviceId);
+                if (savedKey) {
+                    formData.append("license_key", savedKey);
+                }
 
-                let simPercent = 25;
+                let simPercent = 20;
+                item.statusText = `Đang phân tích bố cục... (${simPercent}%)`;
+                this.renderQueueTable();
+
                 const simInterval = setInterval(() => {
-                    if (item.status === 'translating' && simPercent < 85) {
-                        simPercent += 15;
-                        item.statusText = `Đang dịch liên dòng... (${simPercent}%)`;
+                    if (item.status === 'translating') {
+                        if (simPercent < 45) {
+                            simPercent += 10;
+                            item.statusText = `Đang phân tích cấu trúc & bảng biểu... (${simPercent}%)`;
+                        } else if (simPercent < 75) {
+                            simPercent += 8;
+                            item.statusText = `Đang dịch song ngữ liên dòng... (${simPercent}%)`;
+                        } else if (simPercent < 92) {
+                            simPercent += 3;
+                            item.statusText = `Đang hoàn tất và tái tạo văn bản... (${simPercent}%)`;
+                        }
                         this.renderQueueTable();
                     }
-                }, 800);
+                }, 750);
 
                 const resp = await fetch("/api/translate", {
                     method: "POST",
@@ -387,9 +405,12 @@ window.LuvApp = {
                 if (resp.status === 403) {
                     const errData = await resp.json();
                     item.status = 'error';
-                    item.errorMsg = errData.message || "Hết hạn quyền truy cập!";
+                    item.errorMsg = errData.message || "Yêu cầu Key kích hoạt!";
                     this.renderQueueTable();
-                    this.showToast(errData.message || "Quyền dịch thuật đã hết hạn hoặc bị thu hồi.", "error");
+                    this.showToast(errData.message || "Yêu cầu nhập Key kích hoạt.", "error");
+                    if (errData.revoked) {
+                        localStorage.removeItem("luv_license_key");
+                    }
                     this.openLicenseModal();
                     break;
                 }
@@ -416,7 +437,7 @@ window.LuvApp = {
                 console.error("Lỗi dịch tệp:", item.name, err);
                 item.status = 'error';
                 item.statusText = 'Lỗi xử lý';
-                item.errorMsg = err.message;
+                item.errorMsg = err.message || "Lỗi xử lý tệp tin.";
                 this.renderQueueTable();
                 this.showToast(`Lỗi khi xử lý tệp ${item.name}: ${err.message}`, 'error');
             }
@@ -580,6 +601,11 @@ window.LuvApp = {
     openLicenseModal: function() {
         const modal = document.getElementById("modal-license");
         if (modal) modal.style.display = "flex";
+        const keyInput = document.getElementById("act-key");
+        const savedKey = localStorage.getItem("luv_license_key");
+        if (keyInput && savedKey && !keyInput.value) {
+            keyInput.value = savedKey;
+        }
     },
 
     closeLicenseModal: function() {
@@ -614,6 +640,7 @@ window.LuvApp = {
             const formData = new FormData();
             formData.append("key", key);
             formData.append("registered_to", "Người Dùng Bản Quyền");
+            formData.append("device_id", this.deviceId);
 
             const resp = await fetch("/api/license/activate", {
                 method: "POST",
@@ -623,6 +650,9 @@ window.LuvApp = {
             const res = await resp.json();
 
             if (resp.ok && res.success) {
+                // Permanently persist Key in localStorage
+                localStorage.setItem("luv_license_key", key);
+
                 if (msgBox) {
                     msgBox.className = "license-alert-box alert-success";
                     msgBox.textContent = "✓ Key kích hoạt đã được xác thực thành công!";

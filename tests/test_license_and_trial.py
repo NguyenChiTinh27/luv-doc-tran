@@ -204,7 +204,7 @@ class TestLicenseAndTrial(unittest.TestCase):
             self.assertFalse(val_res.get("is_active"))
             self.assertTrue(val_res.get("revoked"))
             self.assertEqual(val_res.get("status"), "revoked")
-            self.assertEqual(val_res.get("tier"), "Giấy phép đã bị thu hồi")
+            self.assertIn(val_res.get("tier"), ["Key Đã Bị Thu Hồi", "Giấy phép đã bị thu hồi"])
 
             # Check that license was auto-purged from disk
             self.assertFalse(os.path.exists(self.lic_sec))
