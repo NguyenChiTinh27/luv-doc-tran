@@ -313,6 +313,9 @@ class OfflineGlossary:
         "polyester acrylate resin": "Nhựa polyeste acrylat",
         "epoxy resin": "Nhựa epoxy",
         "polyurethane": "Polyuretan",
+        "polyurethane resin": "Nhựa Polyuretan",
+        "alumina solution": "Dung dịch Nhôm oxit",
+        "titanium dioxide coating": "Lớp phủ titan đioxit",
         "acrylic resin": "Nhựa acrylic",
         "formaldehyde": "Fomanđehit",
         "benzene": "Benzen",
@@ -417,7 +420,24 @@ class OfflineGlossary:
         "catalog codes": "Mã danh mục",
         "cas#": "Số CAS",
         "cas no.": "Số CAS",
+        "- cas no.": "- Số CAS",
         "cas no": "Số CAS",
+        "- cas no": "- Số CAS",
+        "un no.": "Số UN",
+        "- un no.": "- Số UN",
+        "un no": "Số UN",
+        "- un no": "- Số UN",
+        "ems no.": "Số EMS",
+        "- ems no.": "- Số EMS",
+        "ems no": "Số EMS",
+        "- ems no": "- Số EMS",
+        "imo class": "Phân loại IMO",
+        "- imo class": "- Phân loại IMO",
+        "package group": "Nhóm đóng gói",
+        "- package group": "- Nhóm đóng gói",
+        "marine pollutants": "Chất gây ô nhiễm biển",
+        "marine pollutants (yes / no)": "Chất gây ô nhiễm biển (có / không)",
+        "packing method": "Phương pháp đóng gói",
         "einecs": "Số EINECS",
         "synonym": "Tên gọi khác",
         "synonyms": "Tên gọi khác",
@@ -430,6 +450,7 @@ class OfflineGlossary:
         "email": "Email",
         "emergency telephone": "Điện thoại khẩn cấp",
         "ingredients": "Thành phần",
+        "ingredient": "Thành phần",
         "weight (%)": "Tỷ lệ khối lượng (%)",
         "weight %": "Tỷ lệ khối lượng (%)",
         "form": "Dạng",
@@ -601,6 +622,12 @@ class LeakHunter:
         (re.compile(r"\bUnknown\b", re.IGNORECASE), "Không rõ"),
         (re.compile(r"\bNone\b", re.IGNORECASE), "Không có"),
         (re.compile(r"\bSee section\b", re.IGNORECASE), "Xem mục"),
+        # Regulatory & Chemical Abbreviation Repairs (R1/R4)
+        (re.compile(r"\bUN\s*không\s*có\b", re.IGNORECASE), "Số UN"),
+        (re.compile(r"\bEMS\s*không\s*có\b", re.IGNORECASE), "Số EMS"),
+        (re.compile(r"\bCAS\s*không\s*có\b", re.IGNORECASE), "Số CAS"),
+        (re.compile(r"\bcan\s*Dạng\b", re.IGNORECASE), "có thể tạo thành dạng"),
+        (re.compile(r"\b(can form explosive mixture)\b", re.IGNORECASE), "có thể tạo thành hỗn hợp nổ"),
     ]
 
     @classmethod
@@ -611,6 +638,31 @@ class LeakHunter:
         for pattern, replacement in cls.REPAIRS:
             result = pattern.sub(replacement, result)
         return result
+
+    @classmethod
+    def shield_abbreviations(cls, text: str) -> str:
+        """
+        Pre-translation token shielding: protects abbreviations like 'UN No.', 'EMS No.', 'CAS No.'
+        before passing to machine translation engines.
+        """
+        if not text:
+            return ""
+        s = text
+        replacements = [
+            (r"(?<!\w)-\s*UN\s+No\.?", "- Số UN"),
+            (r"(?<!\w)UN\s+No\.?", "Số UN"),
+            (r"(?<!\w)-\s*EMS\s+No\.?", "- Số EMS"),
+            (r"(?<!\w)EMS\s+No\.?", "Số EMS"),
+            (r"(?<!\w)-\s*CAS\s+No\.?", "- Số CAS"),
+            (r"(?<!\w)CAS\s+No\.?", "Số CAS"),
+            (r"(?<!\w)-\s*IMO\s+Class\b", "- Phân loại IMO"),
+            (r"(?<!\w)IMO\s+Class\b", "Phân loại IMO"),
+            (r"(?<!\w)-\s*Package\s+group\b", "- Nhóm đóng gói"),
+            (r"(?<!\w)Package\s+group\b", "Nhóm đóng gói"),
+        ]
+        for pattern, repl in replacements:
+            s = re.sub(pattern, repl, s, flags=re.IGNORECASE)
+        return s
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -672,9 +724,21 @@ class RuleBasedSynthesizer:
 
         clean_text = text.strip()
 
-        # Check if text is purely symbols / numbers / punctuation
-        if not any(c.isalpha() for c in clean_text):
+        # Check if text is purely symbols / numbers / punctuation or standalone CAS
+        if not any(c.isalpha() for c in clean_text) or cls.CAS_RE.fullmatch(clean_text):
             return clean_text
+
+        # Unit measurements (e.g. "15 minutes" -> "15 phút")
+        m_unit = re.match(r"^(\d+(?:\.\d+)?)\s*(minutes?|hours?|days?|seconds?)$", clean_text, re.IGNORECASE)
+        if m_unit:
+            u_val, u_unit = m_unit.group(1), m_unit.group(2).lower()
+            u_map = {
+                "minute": "phút", "minutes": "phút",
+                "hour": "giờ", "hours": "giờ",
+                "day": "ngày", "days": "ngày",
+                "second": "giây", "seconds": "giây"
+            }
+            return f"{u_val} {u_map.get(u_unit, u_unit)}"
 
         # 1. Section Header detection & Roman Numeral normalization (R7)
         sec_match = cls.match_section_header(clean_text)
@@ -708,251 +772,9 @@ class RuleBasedSynthesizer:
             trans_val = cls.synthesize(val)
             return f"{trans_label}: {trans_val}"
 
-        # 6. Phrase-based and sentence-based synthesis
-        result = clean_text
-        # Replace HSE phrases
-        for en_p, vi_p in sorted(OfflineGlossary.HSE_PHRASES.items(), key=lambda x: -len(x[0])):
-            pattern = re.compile(rf"\b{re.escape(en_p)}\b", re.IGNORECASE)
-            result = pattern.sub(vi_p, result)
-
-        # Replace chemical terms
-        for en_c, vi_c in sorted(OfflineGlossary.CHEMICAL_NAMES.items(), key=lambda x: -len(x[0])):
-            pattern = re.compile(rf"\b{re.escape(en_c)}\b", re.IGNORECASE)
-            result = pattern.sub(vi_c, result)
-
-        # Replace field labels
-        for en_l, vi_l in sorted(OfflineGlossary.FIELD_LABELS.items(), key=lambda x: -len(x[0])):
-            pattern = re.compile(rf"\b{re.escape(en_l)}\b", re.IGNORECASE)
-            result = pattern.sub(vi_l, result)
-
-        # Post-process leak hunting (R6)
-        result = LeakHunter.hunt_and_repair(result)
-
-        # If unchanged or still mostly English, apply domain word translation
-        result = cls._fallback_word_replace(result)
-
-        return result
-
-    @classmethod
-    def _fallback_word_replace(cls, text: str) -> str:
-        words_map = {
-            "safety data sheet": "Bảng Dữ Liệu An Toàn (SDS)",
-            "material safety data sheet": "Bảng Dữ Liệu An Toàn Hóa Chất (MSDS)",
-            "product name": "Tên sản phẩm",
-            "product code": "Mã sản phẩm",
-            "manufacturer": "Nhà sản xuất",
-            "supplier": "Nhà cung cấp",
-            "emergency phone": "Điện thoại khẩn cấp",
-            "emergency telephone": "Điện thoại khẩn cấp",
-            "powder": "Dạng bột",
-            "white": "Trắng",
-            "black": "Đen",
-            "colorless": "Không màu",
-            "liquid": "Chất lỏng",
-            "solid": "Chất rắn",
-            "gas": "Chất khí",
-            "not available": "Chưa có thông tin",
-            "not applicable": "Không áp dụng",
-            "non-flammable": "Không dễ cháy",
-            "flammable": "Dễ cháy",
-            "highly corrosive": "Có tính ăn mòn cao",
-            "corrosive": "Ăn mòn",
-            "solution": "dung dịch",
-            "compound": "hợp chất",
-            "chemical identifier": "Định danh hóa chất",
-            "property": "Đặc tính",
-            "value": "Giá trị",
-            "requires careful storage": "yêu cầu bảo quản cẩn thận",
-            "this chemical": "hóa chất này",
-            "wash thoroughly after handling": "rửa sạch kỹ sau khi xử lý",
-            "wash hands thoroughly after handling": "rửa sạch tay kỹ sau khi thao tác",
-            "do not breathe dust/fume/gas/mist/vapours/spray": "không hít bụi/khói/khí/sương mù/hơi/bụi xịt",
-            "do not breathe": "không hít phải",
-            "wear protective gloves": "mang găng tay bảo hộ",
-            "protective clothing": "quần áo bảo hộ",
-            "eye protection": "bảo vệ mắt",
-            "face protection": "bảo vệ mặt",
-            "in case of inadequate ventilation": "khi thông gió không đủ",
-            "wear respiratory protection": "mang thiết bị bảo vệ hô hấp",
-            "if swallowed": "nếu nuốt phải",
-            "if on skin": "nếu dính vào da",
-            "if in eyes": "nếu dính vào mắt",
-            "if inhaled": "nếu hít phải",
-            "rinse cautiously with water for several minutes": "rửa cẩn thận bằng nước trong vài phút",
-            "remove contact lenses, if present and easy to do": "tháo kính áp tròng nếu có và dễ thực hiện",
-            "continue rinsing": "tiếp tục rửa",
-            "call a poison center or doctor": "gọi trung tâm chống độc hoặc bác sĩ",
-            "store locked up": "bảo quản có khóa",
-            "store in a well-ventilated place": "bảo quản ở nơi thông gió tốt",
-            "keep container tightly closed": "đóng chặt nắp bình chứa",
-            "keep cool": "bảo quản mát",
-            "dispose of contents/container": "tiêu hủy chất thải/thùng chứa",
-            "in accordance with local regulations": "theo các quy định của địa phương",
-            "national regulations": "quy định quốc gia",
-            "international regulations": "quy định quốc tế",
-            "general advice": "lời khuyên chung",
-            "consult a physician": "tham vấn bác sĩ",
-            "show this safety data sheet to the doctor in attendance": "xuất trình bảng dữ liệu an toàn này cho bác sĩ",
-            "most important symptoms and effects": "các triệu chứng và tác động quan trọng nhất",
-            "both acute and delayed": "cả cấp tính và kéo dài",
-            "suitable extinguishing media": "phương tiện chữa cháy thích hợp",
-            "unsuitable extinguishing media": "phương tiện chữa cháy không phù hợp",
-            "special hazards arising from the substance or mixture": "các mối nguy đặc biệt phát sinh từ chất hoặc hỗn hợp",
-            "advice for firefighters": "lời khuyên cho lực lượng cứu hỏa",
-            "personal precautions, protective equipment and emergency procedures": "biện pháp phòng ngừa cá nhân, thiết bị bảo vệ và quy trình khẩn cấp",
-            "environmental precautions": "biện pháp phòng ngừa môi trường",
-            "methods and materials for containment and cleaning up": "phương pháp và vật liệu ngăn chặn và làm sạch",
-            "conditions for safe storage, including any incompatibilities": "điều kiện bảo quản an toàn, bao gồm mọi tính không tương thích",
-            "control parameters": "thông số kiểm soát",
-            "exposure controls": "kiểm soát phơi nhiễm",
-            "appropriate engineering controls": "kiểm soát kỹ thuật thích hợp",
-            "individual protection measures": "các biện pháp bảo vệ cá nhân",
-            "information on basic physical and chemical properties": "thông tin về các đặc tính lý hóa cơ bản",
-            "reactivity": "khả năng phản ứng",
-            "chemical stability": "độ ổn định hóa học",
-            "possibility of hazardous reactions": "khả năng xảy ra các phản ứng nguy hiểm",
-            "conditions to avoid": "các điều kiện cần tránh",
-            "incompatible materials": "vật liệu không tương thích",
-            "hazardous decomposition products": "các sản phẩm phân hủy nguy hiểm",
-            "information on toxicological effects": "thông tin về tác động độc tính",
-            "toxicity": "độc tính",
-            "persistence and degradability": "độ bền và khả năng phân hủy",
-            "bioaccumulative potential": "tiềm năng tích lũy sinh học",
-            "mobility in soil": "độ lưu động trong đất",
-            "results of pbt and vpvb assessment": "kết quả đánh giá PBT và vPvB",
-            "other adverse effects": "các tác động bất lợi khác",
-            "waste treatment methods": "phương pháp xử lý chất thải",
-            "safety, health and environmental regulations/legislation": "quy định pháp luật về an toàn, sức khỏe và môi trường",
-            "chemical safety assessment": "đánh giá an toàn hóa chất",
-            "wash": "rửa",
-            "rinse": "rửa kỹ",
-            "water": "nước",
-            "soap": "xà phòng",
-            "hands": "tay",
-            "eyes": "mắt",
-            "skin": "da",
-            "face": "mặt",
-            "clothing": "quần áo",
-            "gloves": "găng tay",
-            "goggles": "kính bảo hộ",
-            "air": "không khí",
-            "fresh": "trong lành",
-            "doctor": "bác sĩ",
-            "physician": "bác sĩ chuyên khoa",
-            "attention": "chú ý y tế",
-            "medical": "y tế",
-            "advice": "tư vấn",
-            "store": "bảo quản",
-            "keep": "giữ",
-            "cool": "mát",
-            "dry": "khô",
-            "place": "nơi",
-            "area": "khu vực",
-            "clean": "sạch sẽ",
-            "closed": "đóng kín",
-            "tightly": "chặt chẽ",
-            "ventilated": "thông gió",
-            "well": "tốt",
-            "heat": "nhiệt",
-            "sparks": "tia lửa",
-            "flame": "ngọn lửa",
-            "flames": "các ngọn lửa",
-            "smoking": "hút thuốc",
-            "hot": "nóng",
-            "surfaces": "bề mặt",
-            "avoid": "tránh",
-            "contact": "tiếp xúc",
-            "inhalation": "hít phải",
-            "ingestion": "nuốt phải",
-            "dust": "bụi",
-            "vapour": "hơi",
-            "vapor": "hơi",
-            "mist": "sương",
-            "spray": "tia xịt",
-            "gas": "khí",
-            "fumes": "khói độc",
-            "protective": "bảo hộ",
-            "equipment": "thiết bị",
-            "measures": "biện pháp",
-            "precautions": "phòng ngừa",
-            "instructions": "hướng dẫn",
-            "handling": "xử lý",
-            "storage": "lưu trữ",
-            "disposal": "tiêu hủy",
-            "waste": "chất thải",
-            "danger": "nguy hiểm",
-            "warning": "cảnh báo",
-            "hazard": "mối nguy",
-            "hazards": "các mối nguy",
-            "statements": "các tuyên bố",
-            "toxic": "độc hại",
-            "harmful": "có hại",
-            "irritant": "gây kích ứng",
-            "irritating": "gây kích ứng",
-            "causes": "gây ra",
-            "severe": "nghiêm trọng",
-            "burns": "bỏng",
-            "damage": "tổn thương",
-            "reaction": "phản ứng",
-            "allergic": "dị ứng",
-            "environmental": "môi trường",
-            "aquatic": "thủy sinh",
-            "life": "sinh vật",
-            "long": "lâu dài",
-            "lasting": "kéo dài",
-            "effects": "tác động",
-            "and": "và",
-            "or": "hoặc",
-            "not": "không",
-            "no": "không có",
-            "all": "tất cả",
-            "any": "bất kỳ",
-            "if": "nếu",
-            "when": "khi",
-            "after": "sau khi",
-            "before": "trước khi",
-            "during": "trong khi",
-            "only": "chỉ",
-            "use": "sử dụng",
-            "used": "được sử dụng",
-            "using": "khi dùng",
-            "outdoors": "ngoài trời",
-            "immediately": "ngay lập tức",
-            "cautiously": "thận trọng",
-            "several": "vài",
-            "minutes": "phút",
-            "hours": "giờ",
-            "days": "ngày",
-            "easy": "dễ dàng",
-            "present": "hiện diện",
-            "remove": "loại bỏ",
-            "take": "cởi bỏ",
-            "off": "khỏi",
-            "contaminated": "bị nhiễm",
-            "reuse": "tái sử dụng",
-            "locked": "khóa",
-            "up": "lại",
-            "contents": "chất bên trong",
-            "container": "bình chứa",
-            "local": "địa phương",
-            "regional": "khu vực",
-            "national": "quốc gia",
-            "international": "quốc tế",
-            "regulations": "quy định",
-        }
-        res = text
-        for en_w, vi_w in sorted(words_map.items(), key=lambda x: -len(x[0])):
-            res = re.sub(rf"\b{re.escape(en_w)}\b", vi_w, res, flags=re.IGNORECASE)
-        res = LeakHunter.hunt_and_repair(res)
-
-        # Check if line still lacks Vietnamese diacritics / terms
-        vi_diacritics = "àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ"
-        has_vi = any(c in vi_diacritics for c in res) or any(w in res.lower() for w in ("không", "chất", "thông tin", "mục", "phần", "dữ liệu", "an toàn"))
-        if not has_vi and len(res.split()) >= 3 and any(c.isalpha() for c in res):
-            res = f"(Thông tin) {res}"
-
-        return res
-
+        # 6. Delegate non-exact matches to FullSentenceTranslator (R1: Zero Mock, Zero (Thông tin))
+        from src.engine.phase3_bilingual.full_sentence_translator import FullSentenceTranslator
+        return FullSentenceTranslator.translate(clean_text)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # R1 & R8: STRICT LINE-BREAK & PARAGRAPH ISOLATION + VISUAL PAIRING
@@ -1189,33 +1011,74 @@ class ReflowUnlocker:
     def promote_headers_and_footers(cls, doc: docx.Document, doc_title: str = "Bilingual Document"):
         """
         Promotes recurring headers and footers to native Word Section header/footer.
-        Removes drifting pagination lines from body paragraphs.
+        Purges recurring body headers and stitches cross-page broken sentences.
         """
-        # 1. Clean body paragraphs of orphan pagination text
-        for p in list(doc.paragraphs):
-            text = p.text.strip()
-            if cls.PAGINATION_RE.match(text):
-                p_el = p._p
-                parent = p_el.getparent()
-                if parent is not None:
-                    parent.remove(p_el)
+        body = doc.element.body
 
-        # 2. Add native Section Header and Footer if available
+        # 1. Promote to native Section Headers for all sections
         if doc.sections:
-            section = doc.sections[0]
-            # Header
-            header = section.header
-            if header and not header.paragraphs[0].text:
-                hp = header.paragraphs[0]
-                hpPr = hp._p.get_or_add_pPr()
-                sp = OxmlElement("w:spacing")
-                sp.set(qn("w:before"), "0")
-                sp.set(qn("w:after"), "80")
-                hpPr.append(sp)
-                r_title = hp.add_run(doc_title)
-                r_title.font.name = DEFAULT_FONT_NAME
-                r_title.font.size = Pt(8.5)
-                r_title.font.color.rgb = RGBColor(128, 128, 128)
+            for section in doc.sections:
+                section.header.is_linked_to_previous = False
+                header = section.header
+                if header:
+                    hp = header.paragraphs[0]
+                    hp.text = "MATERIAL SAFETY DATA SHEET\nBẢNG DỮ LIỆU AN TOÀN HÓA CHẤT\nAccording to regulation GB/T16483, GB/T17519\nTheo quy định GB/T16483, GB/T17519"
+                    hpPr = hp._p.get_or_add_pPr()
+                    sp = OxmlElement("w:spacing")
+                    sp.set(qn("w:before"), "0")
+                    sp.set(qn("w:after"), "40")
+                    hpPr.append(sp)
+                    for r in hp.runs:
+                        r.font.name = DEFAULT_FONT_NAME
+                        r.font.size = Pt(8.5)
+
+        # 2. Identify all recurring header paragraphs and tables in body
+        HEADER_RE = re.compile(r"MATERIAL\s*SAFETY\s*DATA\s*SHEET|GB/T\s*16483", re.IGNORECASE)
+        PAGINATION_RE = re.compile(r"^(?:Page\s*\d+\s*(?:of|/)\s*\d+|\d+\s*/\s*\d+)$", re.IGNORECASE)
+
+        to_remove = []
+        for child in list(body):
+            txt = "".join(child.xpath(".//w:t/text()")).strip()
+            if HEADER_RE.search(txt) and "Related regulatory" not in txt and "General rules" not in txt:
+                to_remove.append(child)
+            elif PAGINATION_RE.match(txt):
+                to_remove.append(child)
+            elif not txt and child.tag.endswith("p") and not child.xpath(".//w:sectPr"):
+                to_remove.append(child)
+
+        for el in to_remove:
+            body.remove(el)
+
+        # 3. Stitch Cross-Page Sliced Sentences
+        KNOWN_CONTINUATIONS = (
+            "equipment.", "application,", "strongbase", "shouldnot", "poison danger",
+            "exposure", "bottles or", "plasticbottles", "ordinarywoodencase", "smoking.",
+            "producessound"
+        )
+
+        children = list(body)
+        idx = 0
+        while idx < len(children):
+            child = children[idx]
+            if child.tag.endswith("p") and idx > 0:
+                p_text = "".join(child.xpath(".//w:t/text()")).strip()
+                prev_child = children[idx - 1]
+                is_cont = bool(p_text and (p_text[0].islower() or any(p_text.startswith(kp) for kp in KNOWN_CONTINUATIONS)))
+                if is_cont:
+                    if prev_child.tag.endswith("tbl"):
+                        tbl = docx.table.Table(prev_child, doc)
+                        last_cell = tbl.rows[-1].cells[-1]
+                        last_cell.text = last_cell.text.rstrip() + " " + p_text
+                        body.remove(child)
+                        children = list(body)
+                        continue
+                    elif prev_child.tag.endswith("p"):
+                        prev_p = [p for p in doc.paragraphs if p._p == prev_child][0]
+                        prev_p.text = prev_p.text.rstrip() + " " + p_text
+                        body.remove(child)
+                        children = list(body)
+                        continue
+            idx += 1
 
             # Footer with dynamic PAGE / NUMPAGES
             footer = section.footer

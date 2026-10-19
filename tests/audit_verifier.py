@@ -74,6 +74,15 @@ LEAKED_HEADINGS = re.compile(
 LEAKED_SECTION_REF = re.compile(r"\bsection\s*\d+(\.\d+)?\b", re.IGNORECASE)
 LEAKED_STATUS = re.compile(r"^(None|Unknown|Not\s+applicable|N/A|See\s+section)$", re.IGNORECASE)
 
+# Prohibited Mock Artifacts (R1 Requirement)
+PROHIBITED_MOCK_STRINGS = [
+    "(Thông tin)",
+    "UN không có",
+    "EMS không có",
+    "CAS không có",
+    "can Dạng",
+]
+
 # Check 5 Section Header Numerals
 ROMAN_TO_INT = {
     "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8,
@@ -415,6 +424,27 @@ def check_zero_leaked_english(doc_tree: etree.Element) -> Tuple[int, List[Dict[s
     return len(violations), violations
 
 
+def check_zero_mock_artifacts(doc_tree: etree.Element) -> Tuple[int, List[Dict[str, Any]]]:
+    """
+    Check: Zero Mock Artifacts & Prohibited Strings (R1 Requirement).
+    Guarantees count of '(Thông tin)', 'UN không có', 'EMS không có', 'CAS không có', and 'can Dạng' == 0.
+    """
+    violations = []
+    # Inspect all paragraph text runs
+    for p in doc_tree.xpath(".//w:p", namespaces=NS):
+        text = "".join(p.xpath(".//w:t/text()", namespaces=NS)).strip()
+        if not text:
+            continue
+        for prohibited in PROHIBITED_MOCK_STRINGS:
+            if prohibited in text:
+                violations.append({
+                    "type": "prohibited_mock_artifact",
+                    "artifact": prohibited,
+                    "snippet": text[:80]
+                })
+    return len(violations), violations
+
+
 def check_header_order(doc_tree: etree.Element) -> Tuple[int, List[Dict[str, Any]]]:
     """
     Check 5: Header Order (Sections 1-16 in strictly ascending Roman/numeric order I-XVI).
@@ -599,6 +629,9 @@ def verify_bilingual_docx(docx_path: str) -> Dict[str, Any]:
             # 7. Visual Parity Check
             parity_passed, parity_issues = check_visual_parity(z, doc_tree)
 
+            # 8. Zero Mock Artifacts Check (R1)
+            mock_count, mock_details = check_zero_mock_artifacts(doc_tree)
+
             # Master Pass Condition
             passed = (
                 concat_count == 0 and
@@ -607,7 +640,8 @@ def verify_bilingual_docx(docx_path: str) -> Dict[str, Any]:
                 leak_count == 0 and
                 order_count == 0 and
                 clip_count == 0 and
-                parity_passed is True
+                parity_passed is True and
+                mock_count == 0
             )
 
             return {
@@ -619,6 +653,7 @@ def verify_bilingual_docx(docx_path: str) -> Dict[str, Any]:
                 "header_order_violations": order_count,
                 "clipped_row_violations": clip_count,
                 "visual_parity_passed": parity_passed,
+                "mock_artifact_violations": mock_count,
                 "details": {
                     "concatenation_violations": concat_details,
                     "double_tab_violations": dtab_details,
@@ -631,7 +666,8 @@ def verify_bilingual_docx(docx_path: str) -> Dict[str, Any]:
                     "leaked_english_violations": leak_details,
                     "header_order_violations": order_details,
                     "clipped_row_violations": clip_details,
-                    "visual_parity_issues": parity_issues
+                    "visual_parity_issues": parity_issues,
+                    "mock_artifact_violations": mock_details,
                 }
             }
 
@@ -646,6 +682,7 @@ def verify_bilingual_docx(docx_path: str) -> Dict[str, Any]:
             "header_order_violations": -1,
             "clipped_row_violations": -1,
             "visual_parity_passed": False,
+            "mock_artifact_violations": -1,
             "details": {"exception": str(e)}
         }
 
@@ -667,6 +704,7 @@ if __name__ == "__main__":
     print(f"Check 5 (Header Order):         Violations: {report['header_order_violations']}")
     print(f"Check 6 (Zero Clipped Rows):    Violations: {report['clipped_row_violations']}")
     print(f"Check 7 (Visual Parity):        Passed: {report['visual_parity_passed']}")
+    print(f"Check 8 (Zero Mock Artifacts):  Violations: {report['mock_artifact_violations']}")
     print("===================================================================\n")
     if not report["passed"]:
         import json

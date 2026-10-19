@@ -55,6 +55,10 @@ from src.engine.phase3_bilingual.api_client import (
     ExternalLLMClient,
     LLMProvider
 )
+from src.engine.phase3_bilingual.full_sentence_translator import (
+    FullSentenceTranslator,
+    TranslationQualityError
+)
 from src.engine.phase3_bilingual.bilingual_translator import (
     BilingualTranslator,
     TranslationConfig
@@ -69,6 +73,8 @@ __all__ = [
     "TokenSanitizer",
     "LeakHunter",
     "RuleBasedSynthesizer",
+    "FullSentenceTranslator",
+    "TranslationQualityError",
     # Additional components
     "ApiCostViolationError",
     "ExternalLLMClient",

@@ -82,10 +82,8 @@ class BilingualTranslator:
         if not text or not text.strip():
             return ""
 
-        if self.llm_client and self.llm_client.is_configured():
-            return self.llm_client.translate(text, context=context)
-
-        return RuleBasedSynthesizer.synthesize(text)
+        from src.engine.phase3_bilingual.full_sentence_translator import FullSentenceTranslator
+        return FullSentenceTranslator.translate(text, context=context, llm_client=self.llm_client)
 
     # Alias for synthesize
     def synthesize(self, text: str) -> str:

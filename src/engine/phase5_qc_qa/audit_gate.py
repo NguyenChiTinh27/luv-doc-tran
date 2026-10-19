@@ -26,6 +26,7 @@ class GateResult:
     header_order_violations: int
     clipped_row_violations: int
     visual_parity_passed: bool
+    mock_artifact_violations: int = 0
     details: Dict[str, Any] = field(default_factory=dict)
     ssim_score: Optional[float] = None
     page_parity: Optional[bool] = None
@@ -45,6 +46,7 @@ class GateResult:
             f"5. Header Order Violations       : {self.header_order_violations} (Goal: 0)",
             f"6. Clipped Row Height Violations : {self.clipped_row_violations} (Goal: 0)",
             f"7. Visual Parity Compliance      : {self.visual_parity_passed} (Goal: True)",
+            f"8. Zero Mock Artifacts Violations: {self.mock_artifact_violations} (Goal: 0)",
         ]
         if self.ssim_score is not None:
             lines.append(f"   Visual SSIM Fidelity Score    : {self.ssim_score:.4f}")
@@ -55,7 +57,7 @@ class GateResult:
 
 
 class MasterQualityGate:
-    """Evaluates generated DOCX against the authoritative 7-Point OpenXML Audit."""
+    """Evaluates generated DOCX against the authoritative 8-Point OpenXML Audit."""
 
     @classmethod
     def evaluate(cls, docx_path: str, pdf_path: Optional[str] = None) -> GateResult:
@@ -73,6 +75,7 @@ class MasterQualityGate:
             header_order_violations=int(raw_audit.get("header_order_violations", 0)),
             clipped_row_violations=int(raw_audit.get("clipped_row_violations", 0)),
             visual_parity_passed=bool(raw_audit.get("visual_parity_passed", False)),
+            mock_artifact_violations=int(raw_audit.get("mock_artifact_violations", 0)),
             details=raw_audit.get("details", {})
         )
 

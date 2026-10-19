@@ -49,6 +49,12 @@ class LeakHunter:
         (re.compile(r"\bUnknown\b", re.IGNORECASE), "Không rõ"),
         (re.compile(r"\bNone\b", re.IGNORECASE), "Không có"),
         (re.compile(r"\bSee section\b", re.IGNORECASE), "Xem mục"),
+        # Regulatory & Chemical Abbreviation Repairs (R1/R4)
+        (re.compile(r"\bUN\s*không\s*có\b", re.IGNORECASE), "Số UN"),
+        (re.compile(r"\bEMS\s*không\s*có\b", re.IGNORECASE), "Số EMS"),
+        (re.compile(r"\bCAS\s*không\s*có\b", re.IGNORECASE), "Số CAS"),
+        (re.compile(r"\bcan\s*Dạng\b", re.IGNORECASE), "có thể tạo thành dạng"),
+        (re.compile(r"\b(can form explosive mixture)\b", re.IGNORECASE), "có thể tạo thành hỗn hợp nổ"),
     ]
 
     LEAK_DETECTION_PATTERNS: List[Tuple[re.Pattern, str]] = [
@@ -83,3 +89,28 @@ class LeakHunter:
             if matches:
                 leaks.extend([f"{category}:{m}" if isinstance(m, str) else f"{category}:{m[0]}" for m in matches])
         return leaks
+
+    @classmethod
+    def shield_abbreviations(cls, text: str) -> str:
+        """
+        Pre-translation token shielding: protects abbreviations like 'UN No.', 'EMS No.', 'CAS No.'
+        before passing to machine translation engines.
+        """
+        if not text:
+            return ""
+        s = text
+        replacements = [
+            (r"(?<!\w)-\s*UN\s+No\.?", "- Số UN"),
+            (r"(?<!\w)UN\s+No\.?", "Số UN"),
+            (r"(?<!\w)-\s*EMS\s+No\.?", "- Số EMS"),
+            (r"(?<!\w)EMS\s+No\.?", "Số EMS"),
+            (r"(?<!\w)-\s*CAS\s+No\.?", "- Số CAS"),
+            (r"(?<!\w)CAS\s+No\.?", "Số CAS"),
+            (r"(?<!\w)-\s*IMO\s+Class\b", "- Phân loại IMO"),
+            (r"(?<!\w)IMO\s+Class\b", "Phân loại IMO"),
+            (r"(?<!\w)-\s*Package\s+group\b", "- Nhóm đóng gói"),
+            (r"(?<!\w)Package\s+group\b", "Nhóm đóng gói"),
+        ]
+        for pattern, repl in replacements:
+            s = re.sub(pattern, repl, s, flags=re.IGNORECASE)
+        return s

@@ -47,212 +47,6 @@ class RuleBasedSynthesizer:
         r"C3H8O|C3H6O|C4H8O2|C6H6|C7H8|C8H10|CH2Cl2|CHCl3|C2HCl3)\b"
     )
 
-    FALLBACK_WORDS_MAP: Dict[str, str] = {
-        "safety data sheet": "Bảng Dữ Liệu An Toàn (SDS)",
-        "material safety data sheet": "Bảng Dữ Liệu An Toàn Hóa Chất (MSDS)",
-        "product name": "Tên sản phẩm",
-        "product code": "Mã sản phẩm",
-        "manufacturer": "Nhà sản xuất",
-        "supplier": "Nhà cung cấp",
-        "emergency phone": "Điện thoại khẩn cấp",
-        "emergency telephone": "Điện thoại khẩn cấp",
-        "powder": "Dạng bột",
-        "white": "Trắng",
-        "black": "Đen",
-        "colorless": "Không màu",
-        "liquid": "Chất lỏng",
-        "solid": "Chất rắn",
-        "gas": "Chất khí",
-        "not available": "Chưa có thông tin",
-        "not applicable": "Không áp dụng",
-        "non-flammable": "Không dễ cháy",
-        "flammable": "Dễ cháy",
-        "highly corrosive": "Có tính ăn mòn cao",
-        "corrosive": "Ăn mòn",
-        "solution": "dung dịch",
-        "compound": "hợp chất",
-        "chemical identifier": "Định danh hóa chất",
-        "property": "Đặc tính",
-        "value": "Giá trị",
-        "requires careful storage": "yêu cầu bảo quản cẩn thận",
-        "this chemical": "hóa chất này",
-        "wash thoroughly after handling": "rửa sạch kỹ sau khi xử lý",
-        "wash hands thoroughly after handling": "rửa sạch tay kỹ sau khi thao tác",
-        "do not breathe dust/fume/gas/mist/vapours/spray": "không hít bụi/khói/khí/sương mù/hơi/bụi xịt",
-        "do not breathe": "không hít phải",
-        "wear protective gloves": "mang găng tay bảo hộ",
-        "protective clothing": "quần áo bảo hộ",
-        "eye protection": "bảo vệ mắt",
-        "face protection": "bảo vệ mặt",
-        "in case of inadequate ventilation": "khi thông gió không đủ",
-        "wear respiratory protection": "mang thiết bị bảo vệ hô hấp",
-        "if swallowed": "nếu nuốt phải",
-        "if on skin": "nếu dính vào da",
-        "if in eyes": "nếu dính vào mắt",
-        "if inhaled": "nếu hít phải",
-        "rinse cautiously with water for several minutes": "rửa cẩn thận bằng nước trong vài phút",
-        "remove contact lenses, if present and easy to do": "tháo kính áp tròng nếu có và dễ thực hiện",
-        "continue rinsing": "tiếp tục rửa",
-        "call a poison center or doctor": "gọi trung tâm chống độc hoặc bác sĩ",
-        "store locked up": "bảo quản có khóa",
-        "store in a well-ventilated place": "bảo quản ở nơi thông gió tốt",
-        "keep container tightly closed": "đóng chặt nắp bình chứa",
-        "keep cool": "bảo quản mát",
-        "dispose of contents/container": "tiêu hủy chất thải/thùng chứa",
-        "in accordance with local regulations": "theo các quy định của địa phương",
-        "national regulations": "quy định quốc gia",
-        "international regulations": "quy định quốc tế",
-        "general advice": "lời khuyên chung",
-        "consult a physician": "tham vấn bác sĩ",
-        "show this safety data sheet to the doctor in attendance": "xuất trình bảng dữ liệu an toàn này cho bác sĩ",
-        "most important symptoms and effects": "các triệu chứng và tác động quan trọng nhất",
-        "both acute and delayed": "cả cấp tính và kéo dài",
-        "suitable extinguishing media": "phương tiện chữa cháy thích hợp",
-        "unsuitable extinguishing media": "phương tiện chữa cháy không phù hợp",
-        "special hazards arising from the substance or mixture": "các mối nguy đặc biệt phát sinh từ chất hoặc hỗn hợp",
-        "advice for firefighters": "lời khuyên cho lực lượng cứu hỏa",
-        "personal precautions, protective equipment and emergency procedures": "biện pháp phòng ngừa cá nhân, thiết bị bảo vệ và quy trình khẩn cấp",
-        "environmental precautions": "biện pháp phòng ngừa môi trường",
-        "methods and materials for containment and cleaning up": "phương pháp và vật liệu ngăn chặn và làm sạch",
-        "conditions for safe storage, including any incompatibilities": "điều kiện bảo quản an toàn, bao gồm mọi tính không tương thích",
-        "control parameters": "thông số kiểm soát",
-        "exposure controls": "kiểm soát phơi nhiễm",
-        "appropriate engineering controls": "kiểm soát kỹ thuật thích hợp",
-        "individual protection measures": "các biện pháp bảo vệ cá nhân",
-        "information on basic physical and chemical properties": "thông tin về các đặc tính lý hóa cơ bản",
-        "reactivity": "khả năng phản ứng",
-        "chemical stability": "độ ổn định hóa học",
-        "possibility of hazardous reactions": "khả năng xảy ra các phản ứng nguy hiểm",
-        "conditions to avoid": "các điều kiện cần tránh",
-        "incompatible materials": "vật liệu không tương thích",
-        "hazardous decomposition products": "các sản phẩm phân hủy nguy hiểm",
-        "information on toxicological effects": "thông tin về tác động độc tính",
-        "toxicity": "độc tính",
-        "persistence and degradability": "độ bền và khả năng phân hủy",
-        "bioaccumulative potential": "tiềm năng tích lũy sinh học",
-        "mobility in soil": "độ lưu động trong đất",
-        "results of pbt and vpvb assessment": "kết quả đánh giá PBT và vPvB",
-        "other adverse effects": "các tác động bất lợi khác",
-        "waste treatment methods": "phương pháp xử lý chất thải",
-        "safety, health and environmental regulations/legislation": "quy định pháp luật về an toàn, sức khỏe và môi trường",
-        "chemical safety assessment": "đánh giá an toàn hóa chất",
-        "wash": "rửa",
-        "rinse": "rửa kỹ",
-        "water": "nước",
-        "soap": "xà phòng",
-        "hands": "tay",
-        "eyes": "mắt",
-        "skin": "da",
-        "face": "mặt",
-        "clothing": "quần áo",
-        "gloves": "găng tay",
-        "goggles": "kính bảo hộ",
-        "air": "không khí",
-        "fresh": "trong lành",
-        "doctor": "bác sĩ",
-        "physician": "bác sĩ chuyên khoa",
-        "attention": "chú ý y tế",
-        "medical": "y tế",
-        "advice": "tư vấn",
-        "store": "bảo quản",
-        "keep": "giữ",
-        "cool": "mát",
-        "dry": "khô",
-        "place": "nơi",
-        "area": "khu vực",
-        "clean": "sạch sẽ",
-        "closed": "đóng kín",
-        "tightly": "chặt chẽ",
-        "ventilated": "thông gió",
-        "well": "tốt",
-        "heat": "nhiệt",
-        "sparks": "tia lửa",
-        "flame": "ngọn lửa",
-        "flames": "các ngọn lửa",
-        "smoking": "hút thuốc",
-        "hot": "nóng",
-        "surfaces": "bề mặt",
-        "avoid": "tránh",
-        "contact": "tiếp xúc",
-        "inhalation": "hít phải",
-        "ingestion": "nuốt phải",
-        "dust": "bụi",
-        "vapour": "hơi",
-        "vapor": "hơi",
-        "mist": "sương",
-        "spray": "tia xịt",
-        "gas": "khí",
-        "fumes": "khói độc",
-        "protective": "bảo hộ",
-        "equipment": "thiết bị",
-        "measures": "biện pháp",
-        "precautions": "phòng ngừa",
-        "instructions": "hướng dẫn",
-        "handling": "xử lý",
-        "storage": "lưu trữ",
-        "disposal": "tiêu hủy",
-        "waste": "chất thải",
-        "danger": "nguy hiểm",
-        "warning": "cảnh báo",
-        "hazard": "mối nguy",
-        "hazards": "các mối nguy",
-        "statements": "các tuyên bố",
-        "toxic": "độc hại",
-        "harmful": "có hại",
-        "irritant": "gây kích ứng",
-        "irritating": "gây kích ứng",
-        "causes": "gây ra",
-        "severe": "nghiêm trọng",
-        "burns": "bỏng",
-        "damage": "tổn thương",
-        "reaction": "phản ứng",
-        "allergic": "dị ứng",
-        "environmental": "môi trường",
-        "aquatic": "thủy sinh",
-        "life": "sinh vật",
-        "long": "lâu dài",
-        "lasting": "kéo dài",
-        "effects": "tác động",
-        "and": "và",
-        "or": "hoặc",
-        "not": "không",
-        "no": "không có",
-        "all": "tất cả",
-        "any": "bất kỳ",
-        "if": "nếu",
-        "when": "khi",
-        "after": "sau khi",
-        "before": "trước khi",
-        "during": "trong khi",
-        "only": "chỉ",
-        "use": "sử dụng",
-        "used": "được sử dụng",
-        "using": "khi dùng",
-        "outdoors": "ngoài trời",
-        "immediately": "ngay lập tức",
-        "cautiously": "thận trọng",
-        "several": "vài",
-        "minutes": "phút",
-        "hours": "giờ",
-        "days": "ngày",
-        "easy": "dễ dàng",
-        "present": "hiện diện",
-        "remove": "loại bỏ",
-        "take": "cởi bỏ",
-        "off": "khỏi",
-        "contaminated": "bị nhiễm",
-        "reuse": "tái sử dụng",
-        "locked": "khóa",
-        "up": "lại",
-        "contents": "chất bên trong",
-        "container": "bình chứa",
-        "local": "địa phương",
-        "regional": "khu vực",
-        "national": "quốc gia",
-        "international": "quốc tế",
-        "regulations": "quy định",
-    }
-
     @classmethod
     def roman_to_int(cls, roman_str: str) -> Optional[int]:
         """Converts Roman numeral or string digit to 1-based integer."""
@@ -319,13 +113,21 @@ class RuleBasedSynthesizer:
 
         clean_text = TokenSanitizer.sanitize(text.strip())
 
-        # If text is purely numbers / symbols, preserve as-is
-        if not any(c.isalpha() for c in clean_text):
+        # If text is purely numbers, symbols, formula, or CAS, preserve as-is
+        if cls.is_pure_data(clean_text) or cls.NUMERIC_ONLY_RE.match(clean_text):
             return clean_text
 
-        # If text is a standalone CAS number, preserve as-is
-        if cls.CAS_RE.fullmatch(clean_text):
-            return clean_text
+        # Unit measurements (e.g. "15 minutes" -> "15 phút")
+        m_unit = re.match(r"^(\d+(?:\.\d+)?)\s*(minutes?|hours?|days?|seconds?)$", clean_text, re.IGNORECASE)
+        if m_unit:
+            u_val, u_unit = m_unit.group(1), m_unit.group(2).lower()
+            u_map = {
+                "minute": "phút", "minutes": "phút",
+                "hour": "giờ", "hours": "giờ",
+                "day": "ngày", "days": "ngày",
+                "second": "giây", "seconds": "giây"
+            }
+            return f"{u_val} {u_map.get(u_unit, u_unit)}"
 
         # 1. Section Header detection & Roman Numeral normalization (R7)
         sec_match = cls.match_section_header(clean_text)
@@ -359,50 +161,6 @@ class RuleBasedSynthesizer:
             trans_val = cls.synthesize(val)
             return f"{trans_label}: {trans_val}"
 
-        # 6. Phrase-based and sentence-based synthesis
-        result = clean_text
-
-        # Replace HSE phrases (longest first)
-        for en_p, vi_p in sorted(OfflineGlossary.HSE_PHRASES.items(), key=lambda x: -len(x[0])):
-            pattern = re.compile(rf"\b{re.escape(en_p)}\b", re.IGNORECASE)
-            result = pattern.sub(vi_p, result)
-
-        # Replace chemical terms
-        for en_c, vi_c in sorted(OfflineGlossary.CHEMICAL_NAMES.items(), key=lambda x: -len(x[0])):
-            pattern = re.compile(rf"\b{re.escape(en_c)}\b", re.IGNORECASE)
-            result = pattern.sub(vi_c, result)
-
-        # Replace field labels
-        for en_l, vi_l in sorted(OfflineGlossary.FIELD_LABELS.items(), key=lambda x: -len(x[0])):
-            pattern = re.compile(rf"\b{re.escape(en_l)}\b", re.IGNORECASE)
-            result = pattern.sub(vi_l, result)
-
-        # Post-process leak hunting (R6)
-        result = LeakHunter.hunt_and_repair(result)
-
-        # Fallback word replace if text is still English
-        result = cls._fallback_word_replace(result)
-
-        return result
-
-    @classmethod
-    def _fallback_word_replace(cls, text: str) -> str:
-        """Applies vocabulary replacement dictionary and Vietnamese safety tags."""
-        res = text
-        for en_w, vi_w in sorted(cls.FALLBACK_WORDS_MAP.items(), key=lambda x: -len(x[0])):
-            res = re.sub(rf"\b{re.escape(en_w)}\b", vi_w, res, flags=re.IGNORECASE)
-
-        res = LeakHunter.hunt_and_repair(res)
-
-        # Check if line still lacks Vietnamese diacritics / terms
-        vi_diacritics = (
-            "àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ"
-            "ÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ"
-        )
-        has_vi = any(c in vi_diacritics for c in res) or any(
-            w in res.lower() for w in ("không", "chất", "thông tin", "mục", "phần", "dữ liệu", "an toàn")
-        )
-        if not has_vi and len(res.split()) >= 3 and any(c.isalpha() for c in res):
-            res = f"(Thông tin) {res}"
-
-        return res
+        # 6. Delegate non-exact matches to FullSentenceTranslator (R1: Zero Mock, Zero (Thông tin))
+        from src.engine.phase3_bilingual.full_sentence_translator import FullSentenceTranslator
+        return FullSentenceTranslator.translate(clean_text)
