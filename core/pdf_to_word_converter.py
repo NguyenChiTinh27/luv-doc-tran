@@ -960,18 +960,43 @@ class SmartPDFToWordDispatcher:
             else:
                 logger.info("Microsoft Word chưa được cài đặt, tự động fallback sang offline nhẹ pdf2docx...")
 
-        # 2. Chế độ mặc định 'auto', 'batch', 'vip' hoặc fallback an toàn: Ưu tiên Offline pdf2docx Engine
-        # Ưu việt: Tốc độ cao gấp 5-10 lần Word COM, thread-safe, không chiếm dụng tài nguyên hệ thống,
-        # và 100% miễn nhiễm với các lỗi cờ hạn chế quyền DRM/bản quyền của Word trên các file MSDS của hãng.
+        # 2. Chế độ mặc định 'auto', 'batch', 'vip': Sử dụng Động cơ Hybrid Geometry-to-OpenXML Siêu Cấp VIP Pro
+        try:
+            from src.pdf2word_core.converter import PDF2WordConverter
+            from src.pdf2word_core.models.schema import ConversionConfig
+
+            logger.info("Chuyển đổi PDF sang Word qua Hybrid Geometry-to-OpenXML Engine...")
+            cfg = ConversionConfig(
+                engine_preference="auto" if mode == "auto" else ("engine_b" if mode in ["msword", "word"] else "engine_a"),
+                enable_surgical_pass=True,
+                enable_visual_qa=True,
+                enable_self_heal=True
+            )
+            converter = PDF2WordConverter(cfg)
+            report = converter.convert(input_path, output_path)
+
+            if report.success and os.path.exists(output_path):
+                return {
+                    "success": True,
+                    "engine": f"Hybrid VIP Engine ({report.engine_used})",
+                    "output_file": output_path,
+                    "output_size": os.path.getsize(output_path),
+                    "elapsed_seconds": report.execution_time_seconds,
+                    "pages": report.pdf_pages,
+                    "ssim": report.ssim_score,
+                    "page_count_match": report.page_count_match
+                }
+            else:
+                logger.warning("Hybrid Engine báo cáo không thành công, chuyển sang Offline pdf2docx fallback...")
+        except Exception as core_e:
+            logger.warning(f"Hybrid VIP Engine gặp lỗi ({core_e}), chuyển sang Offline pdf2docx fallback...")
+
+        # 3. Fallback cấp 2: Offline pdf2docx Engine
         try:
             logger.info("Chuyển đổi PDF sang Word bằng thư viện offline nhẹ pdf2docx...")
             return OfflinePDF2DocxEngine.convert(input_path, output_path)
         except Exception as e:
-            logger.warning(f"pdf2docx gặp lỗi ({e}), fallback sang Word COM hoặc TitanAutonomousVIPProEngine...")
-            if MSWordNativeEngine.is_available():
-                try:
-                    return MSWordNativeEngine.convert(input_path, output_path)
-                except Exception as word_e:
-                    logger.warning(f"Word COM fallback cũng gặp lỗi ({word_e}), chuyển sang TitanAutonomousVIPProEngine...")
+            logger.warning(f"pdf2docx gặp lỗi ({e}), fallback sang TitanAutonomousVIPProEngine...")
             return TitanAutonomousVIPProEngine.convert(input_path, output_path)
+
 
