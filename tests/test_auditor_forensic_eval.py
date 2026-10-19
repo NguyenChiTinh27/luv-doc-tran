@@ -12,6 +12,7 @@ Empirically tests and stress-tests all R1-R9 claims in core/bilingual_qc_v2.py:
 
 import os
 import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import tempfile
 import zipfile
 import lxml.etree as etree

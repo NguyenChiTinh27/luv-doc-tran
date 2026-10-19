@@ -60,28 +60,31 @@ class ExternalLLMClient:
         fallback_to_offline: bool = True
     ):
         self.provider = provider.lower() if provider else LLMProvider.DEEPSEEK.value
-        resolved_key = api_key or os.environ.get("DEEPSEEK_API_KEY" if self.provider == "deepseek" else "OPENAI_API_KEY")
-        if not resolved_key and self.provider == "deepseek":
-            root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-            settings_path = os.path.join(root_dir, "settings.json")
-            if os.path.exists(settings_path):
-                try:
-                    with open(settings_path, "r", encoding="utf-8") as sf:
-                        s_data = json.load(sf)
-                        resolved_key = s_data.get("deepseek_api_key")
-                except Exception:
-                    pass
-            if not resolved_key:
-                env_path = os.path.join(root_dir, ".env")
-                if os.path.exists(env_path):
+        if api_key is not None:
+            resolved_key = api_key
+        else:
+            resolved_key = os.environ.get("DEEPSEEK_API_KEY" if self.provider == "deepseek" else "OPENAI_API_KEY")
+            if not resolved_key and self.provider == "deepseek":
+                root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+                settings_path = os.path.join(root_dir, "settings.json")
+                if os.path.exists(settings_path):
                     try:
-                        with open(env_path, "r", encoding="utf-8") as ef:
-                            for eline in ef:
-                                if eline.startswith("DEEPSEEK_API_KEY="):
-                                    resolved_key = eline.split("=", 1)[1].strip()
-                                    break
+                        with open(settings_path, "r", encoding="utf-8") as sf:
+                            s_data = json.load(sf)
+                            resolved_key = s_data.get("deepseek_api_key")
                     except Exception:
                         pass
+                if not resolved_key:
+                    env_path = os.path.join(root_dir, ".env")
+                    if os.path.exists(env_path):
+                        try:
+                            with open(env_path, "r", encoding="utf-8") as ef:
+                                for eline in ef:
+                                    if eline.startswith("DEEPSEEK_API_KEY="):
+                                        resolved_key = eline.split("=", 1)[1].strip()
+                                        break
+                        except Exception:
+                            pass
         self.api_key = resolved_key
         self.base_url = (base_url or self.DEFAULT_BASE_URLS.get(self.provider, "https://api.deepseek.com/v1")).rstrip("/")
         self.model = model or self.DEFAULT_MODELS.get(self.provider, "deepseek-chat")

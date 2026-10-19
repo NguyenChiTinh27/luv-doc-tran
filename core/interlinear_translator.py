@@ -914,41 +914,22 @@ class InterlinearTranslator:
         if not texts:
             return []
 
-        # 1. Thử nghiệm Bing Translator Engine Chuyên sâu
+        # 1. Động cơ Dịch thuật Toàn câu AI (FullSentenceTranslator)
+        try:
+            from src.engine.phase3_bilingual.full_sentence_translator import FullSentenceTranslator
+            ai_results = [FullSentenceTranslator.translate(t) for t in texts]
+            if ai_results and len(ai_results) == len(texts) and any(r != t for r, t in zip(ai_results, texts)):
+                return ai_results
+        except Exception:
+            pass
+
+        # 2. Thử nghiệm Bing Translator Engine Chuyên sâu
         try:
             b_src = "auto-detect" if source_lang.lower() in ["auto", "auto-detect", ""] else ("zh-Hans" if source_lang.lower() in ["zh", "cn"] else source_lang.lower())
             b_tgt = "zh-Hans" if target_lang.lower() in ["zh", "cn"] else target_lang.lower()
             bing_res = BingTranslatorEngine.translate_texts(texts, src=b_src, tgt=b_tgt)
             if bing_res and len(bing_res) == len(texts) and any(r != t for r, t in zip(bing_res, texts)):
                 return bing_res
-        except Exception:
-            pass
-
-        # 2. Tầng Dự phòng Siêu Tốc: Google Translate Engine (Multi-threaded Parallel)
-        try:
-            import urllib.request
-            import urllib.parse
-            g_src = GOOGLE_LANG_MAP.get(source_lang.lower(), source_lang.lower())
-            g_tgt = GOOGLE_LANG_MAP.get(target_lang.lower(), target_lang.lower())
-
-            def _translate_single_google(t_str: str) -> str:
-                clean_t = (t_str or "").strip()
-                if not clean_t:
-                    return ""
-                try:
-                    q = urllib.parse.quote(clean_t)
-                    url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={g_src}&tl={g_tgt}&dt=t&q={q}"
-                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-                    with urllib.request.urlopen(req, timeout=5) as resp:
-                        data = json.loads(resp.read().decode("utf-8"))
-                        return "".join(item[0] for item in data[0] if item[0])
-                except Exception:
-                    return clean_t
-
-            with ThreadPoolExecutor(max_workers=min(8, max(2, len(texts)))) as pool:
-                g_results = list(pool.map(_translate_single_google, texts))
-            if g_results and len(g_results) == len(texts) and any(r != t for r, t in zip(g_results, texts)):
-                return g_results
         except Exception:
             pass
 

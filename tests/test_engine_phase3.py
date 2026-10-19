@@ -493,14 +493,14 @@ class TestExternalLLMClient(unittest.TestCase):
     """Verifies optional external LLM adapter configuration and safety guard."""
 
     def test_unconfigured_client_behavior(self):
-        client = ExternalLLMClient(api_key=None, fallback_to_offline=True)
+        client = ExternalLLMClient(api_key="", fallback_to_offline=True)
         self.assertFalse(client.is_configured())
         # Falls back to offline synthesizer without crashing
         res = client.translate("Water")
         self.assertEqual(res, "Nước")
 
         # When fallback is disabled and no key, raises ValueError
-        strict_client = ExternalLLMClient(api_key=None, fallback_to_offline=False)
+        strict_client = ExternalLLMClient(api_key="", fallback_to_offline=False)
         with self.assertRaises(ValueError):
             strict_client.translate("Water")
 
