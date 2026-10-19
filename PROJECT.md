@@ -34,8 +34,8 @@ CLI: pdf2bilingual_docx_engine.py  # Single-file & batch folder processing, JSON
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|:------------:|:------:|
-| M1 | Full-Sentence Neural Translation & Cache Engine | `src/engine/phase3_bilingual/`, `core/bilingual_qc_v2.py`, `translation_cache.json`, abbreviation shielding, hard output assertions | None | PLANNED |
-| M2 | Body Header Purge & Cross-Page Sentence Stitching | `src/engine/phase4_surgeon/header_footer_promoter.py`, `core/bilingual_qc_v2.py`, Section 15 exemption guard, `<w:sectPr>` preservation, pre-translation stitching | None | PLANNED |
+| M1 | Full-Sentence Neural Translation & Cache Engine | `src/engine/phase3_bilingual/`, `core/bilingual_qc_v2.py`, `translation_cache.json`, abbreviation shielding, hard output assertions | None | DONE |
+| M2 | Body Header Purge & Cross-Page Sentence Stitching | `src/engine/phase4_surgeon/header_footer_promoter.py`, `core/bilingual_qc_v2.py`, Section 15 exemption guard, `<w:sectPr>` preservation, pre-translation stitching | None | IN_PROGRESS |
 | M3 | Multi-Field Splitting, Continuation Merger & 2-Col Grid | `src/engine/phase2_sanitizer/`, `core/bilingual_qc_v2.py`, `merge_continuation_lines`, Sections I, II, XIV splitting, Table 38 repair, 28%/72% 2-column tables | None | PLANNED |
 | M4 | E2E Integration, Torture Sample Verification & Audit Gates | Full pipeline run on torture samples, `tests/audit_verifier.py`, `tests/test_fix_5_errors.py`, CLI runner, forensic integrity verification | M1, M2, M3 | PLANNED |
 
