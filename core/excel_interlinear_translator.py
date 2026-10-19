@@ -40,6 +40,8 @@ from core.interlinear_translator import (
     LANG_NAME_MAP,
     ProtectedText,
     CJK_FONT_MAP,
+    is_different_language_pair,
+    detect_script_type,
 )
 from core.deepseek_ocr import DeepSeekOCR
 from core.context_profiler import AIContextProfiler, ContextProfile
@@ -397,6 +399,72 @@ class ExcelInterlinearTranslator:
         cell.alignment = Alignment(wrap_text=True, vertical=vert, horizontal=horiz)
 
     @classmethod
+    def apply_bilingual_replace_rich_text(
+        cls,
+        cell: Cell,
+        pairs: List[Tuple[str, str]],
+        trans_map: Dict[str, str],
+        output_mode: str = "bilingual",
+        font_family: str = "auto",
+        source_lang: str = "auto",
+        target_lang: str = "vi"
+    ) -> None:
+        """
+        Ghi đè ô song ngữ có sẵn bằng cách thay thế trực tiếp vào vị trí ngôn ngữ thứ 2:
+        - Giữ nguyên dòng 1 (hoặc các dòng chẵn) với font gốc hoặc font CJK tối ưu.
+        - Thay thế dòng 2 (hoặc các dòng lẻ) bằng bản dịch mới với font Times New Roman / CJK, màu xanh #002060, in nghiêng.
+        - Bảo toàn chính xác số lượng dòng gốc (ví dụ: 2 dòng ra đúng 2 dòng).
+        """
+        name, sz, b, i, color = cls._extract_font_props(cell)
+        cfg = CJK_FONT_MAP.get((font_family or "auto").lower().strip(), CJK_FONT_MAP["auto"])
+
+        rich_blocks = []
+        for p_idx, (src_text, old_sec_text) in enumerate(pairs):
+            clean_src = str(src_text or "").strip()
+            clean_trans = str(trans_map.get(clean_src, clean_src) or "").strip()
+
+            # Font cho dòng gốc
+            orig_font_name = name
+            if cls._contains_cjk(clean_src) or (source_lang and source_lang.lower().strip() in ["zh", "chinese", "ja", "ko"]):
+                orig_font_name = cfg.get("cjk", "Microsoft YaHei")
+
+            # Font cho dòng dịch
+            if cls._contains_cjk(clean_trans) or (target_lang and target_lang.lower().strip() in ["zh", "chinese", "ja", "ko"]):
+                trans_font_name = cfg.get("cjk", "Microsoft YaHei")
+            else:
+                trans_font_name = cfg.get("latin", cls.STANDARD_FONT)
+
+            font_orig = InlineFont(
+                rFont=orig_font_name,
+                sz=sz,
+                b=b,
+                i=i,
+                color=color
+            )
+            font_trans = InlineFont(
+                rFont=trans_font_name,
+                sz=sz or 11.0,
+                color=cls.DARK_BLUE_ARGB,
+                b=False,
+                i=True
+            )
+
+            if output_mode.lower() == "bilingual":
+                prefix = "" if p_idx == 0 else "\n"
+                rich_blocks.append(TextBlock(font_orig, f"{prefix}{clean_src}"))
+                rich_blocks.append(TextBlock(font_trans, f"\n{clean_trans}"))
+            else:
+                prefix = "" if p_idx == 0 else "\n"
+                rich_blocks.append(TextBlock(font_trans, f"{prefix}{clean_trans}"))
+
+        cell.value = CellRichText(rich_blocks)
+
+        curr_align = cell.alignment
+        horiz = curr_align.horizontal if (curr_align and curr_align.horizontal) else "left"
+        vert = curr_align.vertical if (curr_align and curr_align.vertical) else "center"
+        cell.alignment = Alignment(wrap_text=True, vertical=vert, horizontal=horiz)
+
+    @classmethod
     def translate_excel(
         cls,
         input_path: str,
@@ -486,12 +554,39 @@ class ExcelInterlinearTranslator:
                     if not should_translate_item(val_str):
                         continue
 
-                    # Lưu bản ghi ô cần dịch
-                    records.append((ws, row_idx, col_idx, cell, val_str))
+                    lines = [l.strip() for l in val_str.splitlines() if l.strip()]
 
-                    if val_str not in seen_texts:
-                        seen_texts.add(val_str)
-                        unique_to_translate.append(val_str)
+                    # Tự động nhận diện ô vốn đã là song ngữ (chứa các cặp dòng khác ngôn ngữ)
+                    is_bilingual_cell = (
+                        len(lines) >= 2
+                        and len(lines) % 2 == 0
+                        and all(
+                            is_different_language_pair(lines[2 * k], lines[2 * k + 1])
+                            for k in range(len(lines) // 2)
+                        )
+                    )
+
+                    if is_bilingual_cell:
+                        pairs = [(lines[2 * k], lines[2 * k + 1]) for k in range(len(lines) // 2)]
+                        cell_meta = {
+                            "type": "bilingual_cell",
+                            "pairs": pairs
+                        }
+                        for src, _ in pairs:
+                            if should_translate_item(src) and src not in seen_texts:
+                                seen_texts.add(src)
+                                unique_to_translate.append(src)
+                    else:
+                        cell_meta = {
+                            "type": "monolingual",
+                            "source": val_str
+                        }
+                        if val_str not in seen_texts:
+                            seen_texts.add(val_str)
+                            unique_to_translate.append(val_str)
+
+                    # Lưu bản ghi ô cần dịch kèm metadata phân loại
+                    records.append((ws, row_idx, col_idx, cell, val_str, cell_meta))
 
         # ── VÒNG 2: CONTEXT-AWARE TRANSLATION (Dịch theo ngữ cảnh) ──
         trans_map: Dict[str, str] = {}
@@ -544,27 +639,43 @@ class ExcelInterlinearTranslator:
                     trans_map[src] = AIContextProfiler.apply_glossary_to_text(src, res, context_profile)
 
         # ── VÒNG 3: AI QUALITY AUDIT & AUTO-HEAL (Kiểm định chất lượng & Tự sửa lỗi) ──
-        translation_pairs = [(orig_text, trans_map.get(orig_text, orig_text)) for ws, row_idx, col_idx, cell, orig_text in records]
+        translation_pairs = [(src, trans_map.get(src, src)) for src in unique_to_translate]
         healed_translations, audit_report = AIQualityAuditor.audit_and_heal_pairs(
             translation_pairs,
             profile=context_profile,
             source_lang=source_lang,
             target_lang=target_lang
         )
+        for src, healed in zip(unique_to_translate, healed_translations):
+            trans_map[src] = healed
 
         # 5. Ghi kết quả song ngữ xen kẽ vào các ô bảng tính
         translated_count = 0
-        for (ws, row_idx, col_idx, cell, orig_text), restored_trans in zip(records, healed_translations):
-            if restored_trans and restored_trans.strip():
-                cls.apply_interlinear_rich_text(
+        for ws, row_idx, col_idx, cell, orig_text, cell_meta in records:
+            meta_type = cell_meta.get("type", "monolingual")
+            if meta_type == "bilingual_cell":
+                pairs = cell_meta["pairs"]
+                cls.apply_bilingual_replace_rich_text(
                     cell=cell,
-                    orig_text=orig_text,
-                    trans_text=restored_trans.strip(),
+                    pairs=pairs,
+                    trans_map=trans_map,
                     output_mode=output_mode,
                     font_family=font_family,
                     source_lang=source_lang,
                     target_lang=target_lang
                 )
+            else:
+                restored_trans = trans_map.get(orig_text, "").strip()
+                if restored_trans:
+                    cls.apply_interlinear_rich_text(
+                        cell=cell,
+                        orig_text=orig_text,
+                        trans_text=restored_trans,
+                        output_mode=output_mode,
+                        font_family=font_family,
+                        source_lang=source_lang,
+                        target_lang=target_lang
+                    )
 
                 # Điều chỉnh chiều cao dòng nếu dòng đã bị gán chiều cao cố định thấp
                 curr_h = ws.row_dimensions[row_idx].height
