@@ -198,11 +198,15 @@ window.LuvApp = {
         if (countBadge) countBadge.textContent = `${this.fileQueue.length} tệp`;
 
         const completedCount = this.fileQueue.filter(f => f.status === 'ready').length;
+        const btnDownloadAll = document.getElementById("btn-download-all");
+        if (btnDownloadAll) {
+            btnDownloadAll.style.display = completedCount > 0 ? "inline-flex" : "none";
+        }
         if (summaryText) {
             if (completedCount === 0) {
                 summaryText.textContent = `Đã chọn ${this.fileQueue.length} tài liệu. Nhấn "Bắt đầu dịch tất cả" để tiến hành.`;
             } else {
-                summaryText.textContent = `Đã hoàn thành ${completedCount}/${this.fileQueue.length} tài liệu. Bạn có thể tải ngay từng tệp bên trên!`;
+                summaryText.textContent = `Đã hoàn thành ${completedCount}/${this.fileQueue.length} tài liệu. Bạn có thể tải toàn bộ tệp (.ZIP) hoặc từng tệp bên trên!`;
             }
         }
 
@@ -352,6 +356,7 @@ window.LuvApp = {
         const sourceLang = document.getElementById("sel-source-lang")?.value || "auto";
         const targetLang = document.getElementById("sel-target-lang")?.value || "vi";
         const engine = document.getElementById("sel-engine")?.value || "neural";
+        const fontFamily = document.getElementById("sel-font-family")?.value || "auto";
 
         for (let i = 0; i < pendingItems.length; i++) {
             const item = pendingItems[i];
@@ -370,6 +375,7 @@ window.LuvApp = {
                 formData.append("provider", engine === "fast" ? "google" : "neural");
                 formData.append("engine_mode", "auto");
                 formData.append("output_mode", "bilingual");
+                formData.append("font_family", fontFamily);
                 formData.append("device_id", this.deviceId);
                 if (savedKey) {
                     formData.append("license_key", savedKey);
@@ -595,6 +601,60 @@ window.LuvApp = {
         if (!this.currentViewingResults) return;
         const url = this.currentViewingResults.download_docx_url || this.currentViewingResults.download_url;
         if (url) window.location.href = url;
+    },
+
+    downloadAllCompleted: async function() {
+        const completedItems = this.fileQueue.filter(f => f.status === 'ready' && f.results);
+        if (completedItems.length === 0) {
+            this.showToast("Chưa có tệp nào được dịch hoàn tất để tải về.", "warning");
+            return;
+        }
+
+        const filenames = [];
+        completedItems.forEach(item => {
+            const fname = item.results.preview_output_filename ||
+                          item.results.filename ||
+                          (item.results.docx_path ? item.results.docx_path.split(/[\\/]/).pop() : null);
+            if (fname && !filenames.includes(fname)) {
+                filenames.push(fname);
+            }
+        });
+
+        if (filenames.length === 0) {
+            this.showToast("Không tìm thấy tệp kết quả khả dụng để đóng gói.", "error");
+            return;
+        }
+
+        const btn = document.getElementById("btn-download-all");
+        const originalHtml = btn ? btn.innerHTML : "";
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = `<span class="spinner-mini"></span> Đang nén toàn bộ tệp (.ZIP)...`;
+        }
+
+        try {
+            const resp = await fetch("/api/download-all-zip", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ filenames: filenames })
+            });
+
+            const res = await resp.json();
+            if (!resp.ok || !res.success) {
+                throw new Error(res.detail || "Không thể tạo gói nén ZIP.");
+            }
+
+            this.showToast(`Đã đóng gói thành công ${res.file_count} tệp! Bắt đầu tải về...`, "success");
+            window.location.href = res.download_url;
+        } catch (err) {
+            console.error("Lỗi tải toàn bộ:", err);
+            this.showToast("Lỗi đóng gói tải về: " + err.message, "error");
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
     },
 
     // ── 7. LICENSE ACTIVATION MODAL (ED25519) ────────────────────────────

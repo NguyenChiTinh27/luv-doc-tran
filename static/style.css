@@ -761,6 +761,41 @@ body.studio-dark {
     font-weight: 500;
 }
 
+.queue-btn-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.btn-pro-download-all {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: #ffffff;
+    border: none;
+    padding: 12px 24px;
+    border-radius: var(--radius-md);
+    font-size: 0.92rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    letter-spacing: 0.02em;
+    box-shadow: 0 6px 20px -4px rgba(16, 185, 129, 0.4);
+    transition: all 0.25s ease;
+}
+
+.btn-pro-download-all:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px -4px rgba(16, 185, 129, 0.5);
+    background: linear-gradient(135deg, #34d399, #10b981);
+}
+
+.btn-pro-download-all:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .btn-pro-primary {
     background: linear-gradient(135deg, #06b6d4, #4f46e5);
     color: #ffffff;

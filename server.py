@@ -14,6 +14,7 @@ import shutil
 import logging
 import tempfile
 import base64
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -291,7 +292,8 @@ async def process_translation(
     engine_mode: str = Form("auto"),
     api_key: Optional[str] = Form(None),
     device_id: str = Form(""),
-    license_key: Optional[str] = Form(None)
+    license_key: Optional[str] = Form(None),
+    font_family: str = Form("auto")
 ):
     """
     Main Bilingual Interlinear Translation Engine:
@@ -357,7 +359,8 @@ async def process_translation(
                 source_lang=source_lang,
                 target_lang=target_lang,
                 provider=actual_provider,
-                api_key=effective_api_key
+                api_key=effective_api_key,
+                font_family=font_family
             )
 
             elapsed = round(time.time() - start_time, 2)
@@ -385,7 +388,8 @@ async def process_translation(
                 provider=actual_provider,
                 engine_mode=engine_mode,
                 output_format="docx",
-                api_key=effective_api_key
+                api_key=effective_api_key,
+                font_family=font_family
             )
 
             # Ensure URLs
@@ -446,6 +450,49 @@ def export_pdf_from_docx(docx_filename: str = Form(...)):
     except Exception as e:
         logger.error("PDF Export error for %s: %s", docx_filename, e)
         raise HTTPException(status_code=500, detail=f"Không thể kết xuất PDF: {str(e)}")
+
+
+@app.post("/api/download-all-zip")
+async def download_all_zip(request: Request):
+    """
+    Tải toàn bộ tệp kết quả trong một tệp nén ZIP duy nhất:
+    Nhận danh sách filenames: List[str] từ request body JSON.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    filenames = body.get("filenames", [])
+    if not filenames or not isinstance(filenames, list):
+        raise HTTPException(status_code=400, detail="Danh sách tệp tin không hợp lệ.")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    zip_filename = f"LUV_DOC_TRAN_TronBo_{timestamp}_{uuid.uuid4().hex[:6]}.zip"
+    zip_path = os.path.join(OUTPUT_DIR, zip_filename)
+
+    added_count = 0
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in filenames:
+            safe_fname = os.path.basename(str(fname).strip())
+            file_path = os.path.join(OUTPUT_DIR, safe_fname)
+            if not os.path.exists(file_path):
+                file_path = os.path.join(TEMP_DIR, safe_fname)
+            if os.path.exists(file_path) and os.path.isfile(file_path):
+                zf.write(file_path, arcname=safe_fname)
+                added_count += 1
+
+    if added_count == 0:
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+        raise HTTPException(status_code=404, detail="Không tìm thấy tệp kết quả nào khả dụng để tạo file nén.")
+
+    return {
+        "success": True,
+        "filename": zip_filename,
+        "download_url": f"/api/download/{zip_filename}",
+        "file_count": added_count
+    }
 
 
 @app.get("/api/download/{filename}")

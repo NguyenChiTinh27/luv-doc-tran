@@ -166,6 +166,21 @@
                         </select>
                     </div>
                 </div>
+
+                <div class="config-col">
+                    <label class="config-label">Kiểu Font Chữ (CJK &amp; Đa Ngữ):</label>
+                    <div class="select-wrapper">
+                        <select id="sel-font-family" class="pro-select">
+                            <option value="auto" selected>Tự động tối ưu (YaHei / SimSun / Times) (Khuyên dùng)</option>
+                            <option value="yahei">Microsoft YaHei (微软雅黑 - Hiện đại, thanh thoát, siêu đẹp)</option>
+                            <option value="simsun">SimSun / Songti (宋体 - Chuẩn văn bản kỹ thuật &amp; hành chính)</option>
+                            <option value="simhei">SimHei (黑体 - Đậm nét, tiêu đề rõ ràng)</option>
+                            <option value="kaiti">KaiTi (楷体 - Thư pháp thanh lịch)</option>
+                            <option value="noto">Noto Sans CJK SC (Không chân hiện đại)</option>
+                            <option value="times">Times New Roman (Cổ điển quốc tế)</option>
+                        </select>
+                    </div>
+                </div>
             </div>
 
             <!-- 3. Multi-file Processing Queue Table -->
@@ -220,6 +235,14 @@
                         Sẵn sàng dịch các tài liệu đã chọn.
                     </div>
                     <div class="queue-btn-group">
+                        <button type="button" id="btn-download-all" class="btn-pro-download-all" style="display:none;" onclick="window.LuvApp.downloadAllCompleted()">
+                            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="7 10 12 15 17 10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                            <span>TẢI TOÀN BỘ TỆP ĐÃ DỊCH (.ZIP)</span>
+                        </button>
                         <button type="button" id="btn-start-batch" class="btn-pro-primary" onclick="window.LuvApp.startBatchProcessing()">
                             <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                             <span id="btn-batch-text">BẮT ĐẦU DỊCH TẤT CẢ TỆP</span>

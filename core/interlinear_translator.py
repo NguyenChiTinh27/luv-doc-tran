@@ -451,9 +451,81 @@ def restore_technical_tokens(text: str, protected: ProtectedText) -> str:
     return result
 
 
-def apply_times_new_roman(run):
-    """Đặt font Times New Roman chuẩn cho run Word."""
-    run.font.name = STANDARD_FONT
+CJK_FONT_MAP = {
+    "auto": {
+        "latin": "Times New Roman",
+        "cjk": "Microsoft YaHei",
+        "cs": "Arial"
+    },
+    "yahei": {
+        "latin": "Microsoft YaHei",
+        "cjk": "Microsoft YaHei",
+        "cs": "Microsoft YaHei"
+    },
+    "simsun": {
+        "latin": "Times New Roman",
+        "cjk": "SimSun",
+        "cs": "SimSun"
+    },
+    "simhei": {
+        "latin": "SimHei",
+        "cjk": "SimHei",
+        "cs": "SimHei"
+    },
+    "kaiti": {
+        "latin": "KaiTi",
+        "cjk": "KaiTi",
+        "cs": "KaiTi"
+    },
+    "times": {
+        "latin": "Times New Roman",
+        "cjk": "SimSun",
+        "cs": "Times New Roman"
+    },
+    "noto": {
+        "latin": "Arial",
+        "cjk": "Noto Sans CJK SC",
+        "cs": "Arial"
+    },
+    "arial": {
+        "latin": "Arial",
+        "cjk": "Microsoft YaHei",
+        "cs": "Arial"
+    }
+}
+
+
+def apply_custom_font(
+    run,
+    font_family: str = "auto",
+    source_lang: str = "auto",
+    target_lang: str = "vi",
+    is_source: bool = False
+):
+    """
+    Áp dụng phông chữ tối ưu chuẩn OpenXML:
+    - w:ascii và w:hAnsi: Font Latinh/Việt Nam (Times New Roman / YaHei / Arial).
+    - w:eastAsia: Font chữ Hán / CJK thẩm mỹ cao (Microsoft YaHei, SimSun, SimHei, KaiTi, Meiryo, Malgun Gothic).
+    - w:cs: Font chữ phức hợp (Ả Rập, Thái, Cyrillic, v.v.).
+    """
+    key = (font_family or "auto").lower().strip()
+    cfg = CJK_FONT_MAP.get(key, CJK_FONT_MAP["auto"])
+    latin_font = cfg["latin"]
+    cjk_font = cfg["cjk"]
+    cs_font = cfg["cs"]
+
+    # Ngôn ngữ đặc thù không dùng chữ Latinh
+    lang_to_check = (source_lang if is_source else target_lang).lower().strip()
+    if lang_to_check in ["ja", "japanese"]:
+        cjk_font = "Meiryo"
+    elif lang_to_check in ["ko", "korean"]:
+        cjk_font = "Malgun Gothic"
+    elif lang_to_check in ["ar", "arabic"]:
+        cs_font = "Traditional Arabic"
+    elif lang_to_check in ["th", "thai"]:
+        cs_font = "Angsana New"
+
+    run.font.name = latin_font
     rPr = run._element.get_or_add_rPr()
     rFonts = rPr.find(qn("w:rFonts"))
     if rFonts is None:
@@ -462,10 +534,16 @@ def apply_times_new_roman(run):
     for k in list(rFonts.attrib.keys()):
         if "theme" in k.lower():
             del rFonts.attrib[k]
-    rFonts.set(qn("w:ascii"), STANDARD_FONT)
-    rFonts.set(qn("w:hAnsi"), STANDARD_FONT)
-    rFonts.set(qn("w:cs"), STANDARD_FONT)
-    rFonts.set(qn("w:eastAsia"), STANDARD_FONT)
+
+    rFonts.set(qn("w:ascii"), latin_font)
+    rFonts.set(qn("w:hAnsi"), latin_font)
+    rFonts.set(qn("w:cs"), cs_font)
+    rFonts.set(qn("w:eastAsia"), cjk_font)
+
+
+def apply_times_new_roman(run, font_family: str = "auto", source_lang: str = "auto", target_lang: str = "vi", is_source: bool = False):
+    """Tương thích ngược: tự động gọi apply_custom_font."""
+    apply_custom_font(run, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=is_source)
 
 
 def should_translate_item(text: str) -> bool:
@@ -887,7 +965,8 @@ class InterlinearTranslator:
         target_lang: str = "vi",
         output_mode: str = "bilingual",  # "bilingual" hoặc "target_only" / "vietnamese_only"
         provider: str = "deepseek",
-        batch_size: int = 30
+        batch_size: int = 30,
+        font_family: str = "auto"
     ) -> Dict[str, Any]:
         """
         Xử lý tài liệu Word sang định dạng Song ngữ Xen kẽ (Interlinear).
@@ -1009,10 +1088,10 @@ class InterlinearTranslator:
                     item = lines_info[0]
                     trans_text = translation_map.get(item["source"], "") if item["needs_trans"] else ""
                     for r in p.runs:
-                        apply_times_new_roman(r)
+                        apply_custom_font(r, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=True)
                     if trans_text and trans_text != item["source"]:
                         r_trans = p.add_run("\n" + trans_text)
-                        apply_times_new_roman(r_trans)
+                        apply_custom_font(r_trans, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=False)
                         r_trans.italic = True
                         r_trans.font.color.rgb = DARK_BLUE
                         if orig_sz:
@@ -1027,7 +1106,7 @@ class InterlinearTranslator:
 
                     for l_idx, item in enumerate(lines_info):
                         r_src = p.add_run(item["source"] if l_idx == 0 else "\n" + item["source"])
-                        apply_times_new_roman(r_src)
+                        apply_custom_font(r_src, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=True)
                         if orig_sz:
                             r_src.font.size = orig_sz
                         if orig_bold:
@@ -1037,7 +1116,7 @@ class InterlinearTranslator:
                             trans_text = translation_map.get(item["source"], "")
                             if trans_text and trans_text != item["source"]:
                                 r_trans = p.add_run("\n" + trans_text)
-                                apply_times_new_roman(r_trans)
+                                apply_custom_font(r_trans, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=False)
                                 r_trans.italic = True
                                 r_trans.font.color.rgb = DARK_BLUE
                                 if orig_sz:
@@ -1047,7 +1126,7 @@ class InterlinearTranslator:
 
                     clean_paragraph_formatting(p, is_in_table=is_in_table)
             else:
-                # Chế độ Chỉ tiếng Việt (Ghi đè)
+                # Chế độ Chỉ ngôn ngữ đích (Ghi đè)
                 new_lines = []
                 for item in lines_info:
                     if item["needs_trans"]:
@@ -1056,7 +1135,7 @@ class InterlinearTranslator:
                         new_lines.append(item["source"])
                 p.text = "\n".join(new_lines)
                 for r in p.runs:
-                    apply_times_new_roman(r)
+                    apply_custom_font(r, font_family=font_family, source_lang=source_lang, target_lang=target_lang, is_source=False)
                     if orig_sz:
                         r.font.size = orig_sz
                     if orig_bold:
@@ -1313,7 +1392,8 @@ class InterlinearTranslator:
         provider: str = "deepseek",
         engine_mode: str = "auto",       # "auto", "ocr_scan", "vip_pro_doc"
         output_format: str = "docx",     # "docx", "pdf", "both"
-        api_key: Optional[str] = None
+        api_key: Optional[str] = None,
+        font_family: str = "auto"
     ) -> Dict[str, Any]:
         """
         ĐIỀU PHỐI VIÊN THỐNG NHẤT CHO TOOL 27 (DOC / DOC-TRAN):
@@ -1359,7 +1439,8 @@ class InterlinearTranslator:
                 source_lang=source_lang,
                 target_lang=target_lang,
                 output_mode=output_mode,
-                provider=provider
+                provider=provider,
+                font_family=font_family
             )
 
         elif ext == ".pdf":

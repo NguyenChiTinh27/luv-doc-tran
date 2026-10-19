@@ -1,4 +1,5 @@
 import os
+import io
 import sys
 import unittest
 from unittest.mock import patch
@@ -6,7 +7,9 @@ import tempfile
 from pathlib import Path
 from fastapi.testclient import TestClient
 import docx
+from docx.oxml.ns import qn
 import openpyxl
+import zipfile
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
@@ -168,6 +171,98 @@ class TestTranslationPipeline(unittest.TestCase):
         finally:
             if os.path.exists(xlsx_path):
                 os.remove(xlsx_path)
+
+    def test_batch_download_all_zip(self):
+        """Verify POST /api/download-all-zip packs multiple translated files into a single ZIP archive."""
+        from server import OUTPUT_DIR
+        test_file_1 = os.path.join(OUTPUT_DIR, f"test_doc_{self.test_device}_1.docx")
+        test_file_2 = os.path.join(OUTPUT_DIR, f"test_doc_{self.test_device}_2.xlsx")
+
+        with open(test_file_1, "wb") as f:
+            f.write(b"DOCX DUMMY CONTENT 1")
+        with open(test_file_2, "wb") as f:
+            f.write(b"XLSX DUMMY CONTENT 2")
+
+        try:
+            resp = self.client.post(
+                "/api/download-all-zip",
+                json={"filenames": [os.path.basename(test_file_1), os.path.basename(test_file_2)]}
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertTrue(data.get("success"))
+            self.assertEqual(data.get("file_count"), 2)
+            self.assertIn("LUV_DOC_TRAN_TronBo_", data.get("filename", ""))
+            self.assertIn("download_url", data)
+
+            # Download the created zip file and verify contents
+            dl_resp = self.client.get(data["download_url"])
+            self.assertEqual(dl_resp.status_code, 200)
+            zip_bytes = io.BytesIO(dl_resp.content)
+            with zipfile.ZipFile(zip_bytes, "r") as zf:
+                namelist = zf.namelist()
+                self.assertIn(os.path.basename(test_file_1), namelist)
+                self.assertIn(os.path.basename(test_file_2), namelist)
+        finally:
+            if os.path.exists(test_file_1):
+                os.remove(test_file_1)
+            if os.path.exists(test_file_2):
+                os.remove(test_file_2)
+
+    def test_cjk_typography_word_and_excel(self):
+        """Verify font_family parameter configures w:eastAsia and Excel fonts for Chinese/CJK without breaking Latin."""
+        doc = docx.Document()
+        doc.add_paragraph("危险化学品安全技术说明书 (MSDS)")
+        doc.add_paragraph("产品名称：浓硫酸。分子式：H2SO4。CAS号：7664-93-9。")
+
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tf:
+            doc.save(tf.name)
+            docx_path = tf.name
+
+        try:
+            with open(docx_path, "rb") as f:
+                resp = self.client.post(
+                    "/api/translate",
+                    files={"file": ("msds_chinese.docx", f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+                    data={
+                        "source_lang": "zh",
+                        "target_lang": "vi",
+                        "font_family": "yahei",
+                        "provider": "google",
+                        "device_id": self.test_device
+                    }
+                )
+            self.assertEqual(resp.status_code, 200)
+            res = resp.json()
+            self.assertTrue(res.get("success"))
+
+            dl_resp = self.client.get(res["download_docx_url"])
+            self.assertEqual(dl_resp.status_code, 200)
+
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as out_tf:
+                out_tf.write(dl_resp.content)
+                out_docx_path = out_tf.name
+
+            try:
+                out_doc = docx.Document(out_docx_path)
+                has_yahei_eastasia = False
+                for p in out_doc.paragraphs:
+                    for r in p.runs:
+                        rPr = r._element.rPr
+                        if rPr is not None:
+                            rFonts = rPr.find(qn("w:rFonts"))
+                            if rFonts is not None:
+                                ea = rFonts.get(qn("w:eastAsia"))
+                                if ea == "Microsoft YaHei":
+                                    has_yahei_eastasia = True
+                self.assertTrue(has_yahei_eastasia, "Expected w:eastAsia to be set to Microsoft YaHei for CJK")
+            finally:
+                if os.path.exists(out_docx_path):
+                    os.remove(out_docx_path)
+
+        finally:
+            if os.path.exists(docx_path):
+                os.remove(docx_path)
 
 
 if __name__ == "__main__":

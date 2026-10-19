@@ -39,6 +39,7 @@ from core.interlinear_translator import (
     InterlinearTranslator,
     LANG_NAME_MAP,
     ProtectedText,
+    CJK_FONT_MAP,
 )
 from core.deepseek_ocr import DeepSeekOCR
 
@@ -315,41 +316,64 @@ class ExcelInterlinearTranslator:
             return True
         return False
 
+    @staticmethod
+    def _contains_cjk(text: str) -> bool:
+        """Kiểm tra chuỗi có chứa ký tự tiếng Trung/Nhật/Hàn hay không."""
+        if not text:
+            return False
+        return bool(re.search(r"[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]", text))
+
     @classmethod
     def apply_interlinear_rich_text(
         cls,
         cell: Cell,
         orig_text: str,
         trans_text: str,
-        output_mode: str = "bilingual"
+        output_mode: str = "bilingual",
+        font_family: str = "auto",
+        source_lang: str = "auto",
+        target_lang: str = "vi"
     ) -> None:
         """
         Áp dụng định dạng Song ngữ Xen kẽ CellRichText cho ô:
-        - Dòng trên: TextBlock với font gốc (name, size, bold, color).
-        - Dòng dưới: TextBlock với font Times New Roman, màu xanh đậm FF002060, in nghiêng.
+        - Dòng trên: TextBlock với font gốc hoặc font CJK tối ưu nếu là chữ Hán/Nhật/Hàn.
+        - Dòng dưới: TextBlock với font tối ưu (Times New Roman cho Latin/Việt, font CJK nếu tiếng đích là CJK), màu xanh đậm FF002060, in nghiêng.
         - Bắt buộc wrap_text=True và vertical='center'.
         """
         if not trans_text or not trans_text.strip():
             return
 
         name, sz, b, i, color = cls._extract_font_props(cell)
+        cfg = CJK_FONT_MAP.get((font_family or "auto").lower().strip(), CJK_FONT_MAP["auto"])
+
+        clean_orig = str(orig_text or "").strip()
+        clean_trans = str(trans_text or "").strip()
+
+        # Xác định font cho dòng gốc
+        orig_font_name = name
+        if cls._contains_cjk(clean_orig) or (source_lang and source_lang.lower().strip() in ["zh", "chinese", "ja", "ko"]):
+            orig_font_name = cfg.get("cjk", "Microsoft YaHei")
+
+        # Xác định font cho dòng dịch
+        if cls._contains_cjk(clean_trans) or (target_lang and target_lang.lower().strip() in ["zh", "chinese", "ja", "ko"]):
+            trans_font_name = cfg.get("cjk", "Microsoft YaHei")
+        else:
+            trans_font_name = cfg.get("latin", cls.STANDARD_FONT)
+
         font_orig = InlineFont(
-            rFont=name,
+            rFont=orig_font_name,
             sz=sz,
             b=b,
             i=i,
             color=color
         )
         font_trans = InlineFont(
-            rFont=cls.STANDARD_FONT,
+            rFont=trans_font_name,
             sz=sz or 11.0,
             color=cls.DARK_BLUE_ARGB,
             b=False,
             i=True
         )
-
-        clean_orig = str(orig_text or "").strip()
-        clean_trans = str(trans_text or "").strip()
 
         if output_mode.lower() == "bilingual":
             rt = CellRichText([
@@ -380,7 +404,8 @@ class ExcelInterlinearTranslator:
         provider: str = "google",
         api_key: Optional[str] = None,
         output_mode: str = "bilingual",
-        batch_size: int = 30
+        batch_size: int = 30,
+        font_family: str = "auto"
     ) -> Dict[str, Any]:
         r"""
         Phương thức chính thực hiện Dịch Song Ngữ Bảng Tính Excel:
@@ -519,7 +544,10 @@ class ExcelInterlinearTranslator:
                     cell=cell,
                     orig_text=orig_text,
                     trans_text=restored_trans.strip(),
-                    output_mode=output_mode
+                    output_mode=output_mode,
+                    font_family=font_family,
+                    source_lang=source_lang,
+                    target_lang=target_lang
                 )
 
                 # Điều chỉnh chiều cao dòng nếu dòng đã bị gán chiều cao cố định thấp
