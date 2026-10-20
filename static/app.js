@@ -18,6 +18,7 @@ window.LuvApp = {
         this.setupDragAndDrop();
         await this.checkLicenseAndTrial();
         this.startTrialCountdown();
+        await this.syncAiKeyFromStorage();
         this.checkAiKeyStatus();
     },
 
@@ -270,7 +271,10 @@ window.LuvApp = {
                     <td>
                         <div class="file-name-cell">
                             <span class="file-cell-icon">${this.getFileIconSvg(item.ext)}</span>
-                            <span>${this.escapeHtml(item.name)}</span>
+                            <div>
+                                <div>${this.escapeHtml(item.name)}</div>
+                                ${item.results && item.results.detected_lang_name ? `<div style="font-size:0.75rem; color:#38bdf8; margin-top:2px; font-weight:500;">🌐 Nhận diện: ${this.escapeHtml(item.results.detected_lang_name)} (${this.escapeHtml(item.results.detected_source_lang || '')})</div>` : ''}
+                            </div>
                         </div>
                     </td>
                     <td><span class="file-fmt-badge ${fmtBadgeClass}">${fmtLabel}</span></td>
@@ -356,6 +360,7 @@ window.LuvApp = {
 
             try {
                 const savedKey = localStorage.getItem("luv_license_key") || "";
+                const savedAiKey = (localStorage.getItem("luv_deepseek_key") || "").trim();
                 const formData = new FormData();
                 formData.append("file", item.file);
                 formData.append("source_lang", sourceLang);
@@ -367,6 +372,9 @@ window.LuvApp = {
                 formData.append("device_id", this.deviceId);
                 if (savedKey) {
                     formData.append("license_key", savedKey);
+                }
+                if (savedAiKey) {
+                    formData.append("api_key", savedAiKey);
                 }
 
                 let simPercent = 20;
@@ -605,31 +613,66 @@ window.LuvApp = {
         }
     },
 
-    // ── 7.5. DEEPSEEK AI KEY MANAGEMENT (ONE-TIME, WRITE-ONLY, ANTI-COPY) ──
+    // ── 7.5. DEEPSEEK AI KEY MANAGEMENT (PERSISTENT & FLEXIBLE) ────────────
+    syncAiKeyFromStorage: async function() {
+        try {
+            const localKey = (localStorage.getItem("luv_deepseek_key") || "").trim();
+            if (!localKey) return;
+            const resp = await fetch("/api/settings/ai-status");
+            if (resp.ok) {
+                const data = await resp.json();
+                if (!data.configured) {
+                    const fd = new FormData();
+                    fd.append("key", localKey);
+                    await fetch("/api/settings/ai-key", { method: "POST", body: fd });
+                }
+            }
+        } catch (e) {
+            console.warn("Auto sync AI key warning:", e);
+        }
+    },
+
     checkAiKeyStatus: async function() {
         try {
+            const localKey = (localStorage.getItem("luv_deepseek_key") || "").trim();
             const resp = await fetch("/api/settings/ai-status");
-            if (!resp.ok) return;
-            const data = await resp.json();
+            let isConfigured = false;
+            let maskedKey = "";
+
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data.configured) {
+                    isConfigured = true;
+                    maskedKey = data.masked_key || "";
+                }
+            }
+
+            if (!isConfigured && localKey) {
+                isConfigured = true;
+                const p = localKey.slice(0, 5);
+                const s = localKey.slice(-3);
+                maskedKey = `${p}${'•'.repeat(16)}${s}`;
+            }
+
             const btnLabel = document.getElementById("ai-key-header-label");
             const btn = document.getElementById("btn-open-ai-key");
             const statusBox = document.getElementById("ai-key-status-box");
             const input = document.getElementById("input-deepseek-key");
 
-            if (data.configured) {
+            if (isConfigured) {
                 if (btnLabel) btnLabel.textContent = "✓ DeepSeek AI Sẵn Sàng";
                 if (btn) {
                     btn.style.background = "rgba(16, 185, 129, 0.2)";
                     btn.style.borderColor = "rgba(16, 185, 129, 0.6)";
                     btn.style.color = "#10b981";
                 }
-                if (input) {
-                    input.placeholder = data.masked_key || "sk-•••••••••••••••••••••••••••••••• (Đã lưu)";
-                    input.value = ""; // Anti-copy: always blank in DOM
+                if (input && !input.getAttribute("data-editing")) {
+                    input.placeholder = maskedKey || "sk-•••••••••••••••••••••••••••••••• (Đã lưu)";
+                    input.value = "";
                 }
                 if (statusBox) {
                     statusBox.className = "license-alert-box alert-success";
-                    statusBox.innerHTML = `✓ <strong>Đã kết nối DeepSeek AI:</strong> ${data.masked_key || "Khóa bảo mật đã lưu trên máy chủ."}<br><small style="opacity:0.85;">Khóa được lưu trữ an toàn, chống sao chép và tự động dùng cho mọi tác vụ dịch.</small>`;
+                    statusBox.innerHTML = `✓ <strong>Đã kết nối DeepSeek AI:</strong> ${maskedKey}<br><small style="opacity:0.9;">Khóa đã được lưu trữ bền vững trên trình duyệt và máy chủ. Mọi tác vụ dịch sẽ tự động dùng khóa này mà không cần nhập lại.</small>`;
                     statusBox.style.display = "block";
                 }
             } else {
@@ -645,7 +688,7 @@ window.LuvApp = {
                 }
                 if (statusBox) {
                     statusBox.className = "license-alert-box alert-warning";
-                    statusBox.innerHTML = "Chưa lưu khóa DeepSeek API Key. Vui lòng nhập khóa mới để kích hoạt dịch thuật AI.";
+                    statusBox.innerHTML = "Chưa lưu khóa DeepSeek API Key. Vui lòng nhập khóa mới để kích hoạt dịch thuật chuyên sâu bằng AI.";
                     statusBox.style.display = "block";
                 }
             }
@@ -663,6 +706,30 @@ window.LuvApp = {
     closeAiKeyModal: function() {
         const modal = document.getElementById("modal-ai-key");
         if (modal) modal.style.display = "none";
+        const input = document.getElementById("input-deepseek-key");
+        if (input) input.removeAttribute("data-editing");
+    },
+
+    enableEditAiKey: function() {
+        const input = document.getElementById("input-deepseek-key");
+        const statusBox = document.getElementById("ai-key-status-box");
+        if (input) {
+            input.setAttribute("data-editing", "true");
+            input.value = "";
+            input.placeholder = "Dán mã sk-... mới vào đây";
+            input.focus();
+        }
+        if (statusBox) {
+            statusBox.className = "license-alert-box alert-warning";
+            statusBox.innerHTML = "Hãy dán mã DeepSeek API Key mới vào ô trên rồi bấm nút <strong>'LƯU KHÓA AI'</strong>.";
+            statusBox.style.display = "block";
+        }
+    },
+
+    toggleKeyVisibility: function() {
+        const input = document.getElementById("input-deepseek-key");
+        if (!input) return;
+        input.type = input.type === "password" ? "text" : "password";
     },
 
     handleSaveAiKey: async function() {
@@ -670,11 +737,21 @@ window.LuvApp = {
         const statusBox = document.getElementById("ai-key-status-box");
         const submitBtn = document.getElementById("btn-submit-ai-key");
 
-        const key = (input ? input.value : "").trim();
-        if (!key) {
+        const enteredKey = (input ? input.value : "").trim();
+        const existingLocalKey = (localStorage.getItem("luv_deepseek_key") || "").trim();
+
+        if (!enteredKey) {
+            if (existingLocalKey) {
+                if (statusBox) {
+                    statusBox.className = "license-alert-box alert-success";
+                    statusBox.innerHTML = "✓ Khóa DeepSeek hiện tại vẫn đang hoạt động tốt. Nếu bạn muốn đổi sang khóa khác, vui lòng bấm <strong>'✎ Đổi Key Khác'</strong> và dán mã mới.";
+                    statusBox.style.display = "block";
+                }
+                return;
+            }
             if (statusBox) {
                 statusBox.className = "license-alert-box alert-error";
-                statusBox.textContent = "Vui lòng nhập mã DeepSeek API Key (bắt đầu bằng sk-...)";
+                statusBox.textContent = "Vui lòng nhập hoặc dán mã DeepSeek API Key (bắt đầu bằng sk-...)";
                 statusBox.style.display = "block";
             }
             return;
@@ -682,12 +759,16 @@ window.LuvApp = {
 
         if (submitBtn) {
             submitBtn.disabled = true;
-            submitBtn.innerHTML = `<span class="spinner-mini"></span> Đang lưu khóa an toàn...`;
+            submitBtn.innerHTML = `<span class="spinner-mini"></span> Đang lưu khóa...`;
         }
 
         try {
+            // 1. Lưu vào localStorage trình duyệt (chống mất khi restart server hoặc mở tab mới)
+            localStorage.setItem("luv_deepseek_key", enteredKey);
+
+            // 2. Gửi lưu lên máy chủ
             const formData = new FormData();
-            formData.append("key", key);
+            formData.append("key", enteredKey);
 
             const resp = await fetch("/api/settings/ai-key", {
                 method: "POST",
@@ -696,8 +777,11 @@ window.LuvApp = {
 
             const res = await resp.json();
             if (resp.ok && res.success) {
-                if (input) input.value = ""; // Anti-copy: immediately wipe from DOM!
-                this.showToast(res.message || "Đã lưu khóa DeepSeek AI an toàn!", "success");
+                if (input) {
+                    input.removeAttribute("data-editing");
+                    input.value = "";
+                }
+                this.showToast(res.message || "Đã lưu khóa DeepSeek AI bền vững!", "success");
                 await this.checkAiKeyStatus();
                 setTimeout(() => {
                     this.closeAiKeyModal();
@@ -718,9 +802,82 @@ window.LuvApp = {
         } finally {
             if (submitBtn) {
                 submitBtn.disabled = false;
-                submitBtn.innerHTML = `<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> LƯU KHÓA AI BẢO MẬT`;
+                submitBtn.innerHTML = `<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> LƯU KHÓA AI`;
             }
         }
+    },
+
+    handleTestAiKey: async function() {
+        const input = document.getElementById("input-deepseek-key");
+        const statusBox = document.getElementById("ai-key-status-box");
+        const testBtn = document.getElementById("btn-test-ai-key");
+
+        const enteredKey = (input ? input.value : "").trim();
+        const savedKey = (localStorage.getItem("luv_deepseek_key") || "").trim();
+        const testKey = enteredKey || savedKey;
+
+        if (!testKey) {
+            if (statusBox) {
+                statusBox.className = "license-alert-box alert-warning";
+                statusBox.textContent = "Vui lòng nhập hoặc dán mã sk-... vào ô trên để kiểm tra kết nối.";
+                statusBox.style.display = "block";
+            }
+            return;
+        }
+
+        if (testBtn) {
+            testBtn.disabled = true;
+            testBtn.innerHTML = `<span class="spinner-mini"></span> Đang test...`;
+        }
+
+        try {
+            const formData = new FormData();
+            formData.append("key", testKey);
+
+            const resp = await fetch("/api/settings/ai-test", {
+                method: "POST",
+                body: formData
+            });
+
+            const res = await resp.json();
+            if (statusBox) {
+                statusBox.className = res.success ? "license-alert-box alert-success" : "license-alert-box alert-error";
+                statusBox.innerHTML = res.message;
+                statusBox.style.display = "block";
+            }
+            if (res.success) {
+                this.showToast("Kiểm tra DeepSeek AI thành công!", "success");
+            }
+        } catch (e) {
+            if (statusBox) {
+                statusBox.className = "license-alert-box alert-error";
+                statusBox.textContent = "Lỗi kết nối khi test: " + e.message;
+                statusBox.style.display = "block";
+            }
+        } finally {
+            if (testBtn) {
+                testBtn.disabled = false;
+                testBtn.innerHTML = `⚡ TEST KEY`;
+            }
+        }
+    },
+
+    handleClearAiKey: async function() {
+        if (!confirm("Bạn có chắc chắn muốn xóa khóa DeepSeek AI khỏi trình duyệt và máy chủ không?")) {
+            return;
+        }
+        localStorage.removeItem("luv_deepseek_key");
+        try {
+            await fetch("/api/settings/ai-clear", { method: "POST" });
+        } catch (e) {}
+        const input = document.getElementById("input-deepseek-key");
+        if (input) {
+            input.removeAttribute("data-editing");
+            input.value = "";
+            input.placeholder = "Dán mã sk-... vào đây";
+        }
+        this.showToast("Đã xóa khóa DeepSeek AI thành công.", "info");
+        await this.checkAiKeyStatus();
     },
 
     // ── 8. MODERN TOAST NOTIFICATIONS ────────────────────────────────────

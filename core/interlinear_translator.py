@@ -808,6 +808,60 @@ class BingTranslatorEngine:
         return [final_map[i] for i in range(len(texts))]
 
 
+def clean_json_markdown(content: str) -> str:
+    """
+    Tiền xử lý và làm sạch JSON trả về từ DeepSeek AI:
+    - Bóc tách mã Markdown code block (```json ... ``` hoặc ``` ... ```).
+    - Bóc tách thẻ suy nghĩ <think>...</think> của DeepSeek Reasoner.
+    - Trích xuất chính xác khối JSON {} ngoài cùng.
+    - Khử các dấu phẩy thừa (trailing commas) trước } hoặc ].
+    """
+    if not content:
+        return "{}"
+
+    text = content.strip()
+
+    # 1. Loại bỏ <think>...</think>
+    text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.DOTALL).strip()
+
+    # 2. Bóc tách code block ```json ... ``` hoặc ``` ... ```
+    match_code_block = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if match_code_block:
+        text = match_code_block.group(1).strip()
+
+    # 3. Trích xuất khối giữa { và } ngoài cùng
+    start_brace = text.find("{")
+    end_brace = text.rfind("}")
+    if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+        text = text[start_brace : end_brace + 1].strip()
+
+    # 4. Khử trailing commas trước } hoặc ]
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+
+    return text
+
+
+def robust_json_loads(content: str) -> Dict[str, Any]:
+    """Phân tích JSON an toàn chống lỗi cú pháp markdown và trích xuất regex dự phòng."""
+    cleaned = clean_json_markdown(content)
+    try:
+        return json.loads(cleaned)
+    except Exception as e:
+        # Fallback: regex extraction for "key": "value"
+        extracted = {}
+        pattern = re.compile(r'"(\d+)":\s*"((?:[^"\\]|\\.)*)"')
+        for match in pattern.finditer(cleaned):
+            k = match.group(1)
+            v = match.group(2)
+            try:
+                extracted[k] = json.loads(f'"{v}"')
+            except Exception:
+                extracted[k] = v
+        if extracted:
+            return extracted
+        raise e
+
+
 class InterlinearTranslator:
     """Bộ máy dịch song ngữ chuyên sâu đa ngôn ngữ kế thừa từ 00_CHAY_BAN_DA_SUA_EN_VI."""
 
@@ -815,6 +869,7 @@ class InterlinearTranslator:
 
     DEFAULT_MODEL = "DeepSeek-V4.1-Flash"
     FALLBACK_MODEL = "deepseek-chat"
+    REASONER_MODEL = "deepseek-reasoner"
 
     @classmethod
     def _convert_docx_to_pdf_vector(cls, docx_path: str, pdf_path: str) -> str:
@@ -835,7 +890,11 @@ class InterlinearTranslator:
         if not texts:
             return []
 
-        src_name = LANG_NAME_MAP.get(source_lang, "ngôn ngữ gốc")
+        # Nhận diện tên ngôn ngữ chính xác từ mã nguồn
+        effective_src = (source_lang or "").strip().lower()
+        if context_profile and effective_src in ("auto", "auto-detect", "unknown", ""):
+            effective_src = getattr(context_profile, "detected_source_lang", "en")
+        src_name = LANG_NAME_MAP.get(effective_src, "tiếng Anh")
         tgt_name = LANG_NAME_MAP.get(target_lang, "tiếng Việt")
         
         # Bảo vệ tokens
@@ -877,6 +936,7 @@ class InterlinearTranslator:
             if resp.status_code != 200 and target_model != cls.FALLBACK_MODEL:
                 err_text = resp.text.lower()
                 if any(k in err_text for k in ("model", "not found", "invalid_request", "does not exist", "unsupported")) or resp.status_code in (400, 404):
+                    logger.warning("DeepSeek model '%s' failed (%s), fallback sang '%s'", target_model, resp.status_code, cls.FALLBACK_MODEL)
                     body["model"] = cls.FALLBACK_MODEL
                     resp = requests.post(cls.DEEPSEEK_API_URL, headers=headers, json=body, timeout=15)
 
@@ -885,7 +945,7 @@ class InterlinearTranslator:
 
             res_json = resp.json()
             content = res_json["choices"][0]["message"]["content"]
-            parsed = json.loads(content)
+            parsed = robust_json_loads(content)
 
             results = []
             for i, pt in enumerate(protected_list):

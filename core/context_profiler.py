@@ -38,9 +38,28 @@ class ContextProfile:
     confidence: float = 0.95
     sample_excerpt: str = ""
     context_anchor: str = ""
+    detected_source_lang: str = "en"
+    detected_lang_name: str = "Tiếng Anh"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+LANG_CODE_TO_NAME: Dict[str, str] = {
+    "zh": "Tiếng Trung",
+    "en": "Tiếng Anh",
+    "ja": "Tiếng Nhật",
+    "ko": "Tiếng Hàn",
+    "ru": "Tiếng Nga",
+    "de": "Tiếng Đức",
+    "fr": "Tiếng Pháp",
+    "es": "Tiếng Tây Ban Nha",
+    "vi": "Tiếng Việt",
+    "th": "Tiếng Thái",
+    "it": "Tiếng Ý",
+    "pt": "Tiếng Bồ Đào Nha",
+    "id": "Tiếng Indonesia",
+}
 
 
 # ============================================================================
@@ -358,6 +377,74 @@ class AIContextProfiler:
         return best_domain, confidence
 
     @classmethod
+    def detect_language(cls, text: str) -> Tuple[str, str]:
+        """
+        Nhận diện ngôn ngữ nguồn tự động dựa trên phân tích ký tự Unicode & từ vựng đặc trưng:
+        - Ký tự Kana (Hiragana / Katakana) -> Tiếng Nhật (ja)
+        - Ký tự Hanzi / Hán tự không chứa Kana -> Tiếng Trung (zh)
+        - Ký tự Hangul -> Tiếng Hàn (ko)
+        - Bảng chữ cái Cyrillic -> Tiếng Nga (ru)
+        - Tiếng Việt (dấu thanh tiếng Việt phong phú) -> Tiếng Việt (vi)
+        - Tiếng Đức (ä, ö, ü, ß và từ vựng đặc trưng) -> Tiếng Đức (de)
+        - Tiếng Pháp (accent aigu, grave, circonflexe, cédille và từ vựng) -> Tiếng Pháp (fr)
+        - Tiếng Tây Ban Nha (ñ, dấu hỏi/chấm than ngược, từ vựng) -> Tiếng Tây Ban Nha (es)
+        - Tiếng Anh (en) cho văn bản Latin thông thường
+        """
+        if not text or not text.strip():
+            return "en", "Tiếng Anh"
+
+        # 1. Kiểm tra ký tự Kana (Hiragana & Katakana) -> Nhật Bản (ja)
+        # Văn bản tiếng Nhật thường chứa cả Hán tự (Kanji) và Kana. Nếu có Kana -> chắc chắn tiếng Nhật!
+        kana_count = len(re.findall(r"[\u3040-\u309f\u30a0-\u30ff]", text))
+        if kana_count >= 1:
+            return "ja", "Tiếng Nhật"
+
+        # 2. Kiểm tra Hanzi / Hán tự (không chứa Kana) -> Tiếng Trung (zh)
+        hanzi_count = len(re.findall(r"[\u4e00-\u9fff\u3400-\u4dbf]", text))
+        if hanzi_count >= 2:
+            return "zh", "Tiếng Trung"
+
+        # 3. Kiểm tra Hangul -> Tiếng Hàn (ko)
+        hangul_count = len(re.findall(r"[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f]", text))
+        if hangul_count >= 1:
+            return "ko", "Tiếng Hàn"
+
+        # 4. Kiểm tra Cyrillic -> Tiếng Nga (ru)
+        cyrillic_count = len(re.findall(r"[\u0400-\u04ff]", text))
+        if cyrillic_count >= 3:
+            return "ru", "Tiếng Nga"
+
+        # 5. Phân tích văn bản hệ chữ Latin
+        lower_text = text.lower()
+
+        # a) Tiếng Việt: kiểm tra ký tự có dấu đặc trưng
+        vi_chars = len(re.findall(r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]", lower_text))
+        vi_words = len(re.findall(r"\b(của|và|các|được|cho|không|trong|nguy|hại|an\s*toàn|chất|dung\s*dịch)\b", lower_text))
+        if vi_chars >= 3 or vi_words >= 2:
+            return "vi", "Tiếng Việt"
+
+        # b) Tiếng Đức: ký tự đặc thù ä, ö, ü, ß và từ vựng
+        de_chars = len(re.findall(r"[äöüß]", lower_text))
+        de_words = len(re.findall(r"\b(und|der|die|das|mit|für|nicht|ist|ein|eine|von|sicherheitsdatenblatt|gefahr|gefahrenhinweise)\b", lower_text))
+        if de_chars >= 2 or de_words >= 2:
+            return "de", "Tiếng Đức"
+
+        # c) Tiếng Pháp: ký tự é, è, ê, ë, à, â, ù, û, ç, î, ï, ô, œ, æ và từ vựng
+        fr_chars = len(re.findall(r"[çœæêëûîï]", lower_text))
+        fr_words = len(re.findall(r"\b(le|la|les|des|du|dans|pour|avec|une|est|fiche|données|sécurité|danger|substance)\b", lower_text))
+        if fr_chars >= 2 or fr_words >= 2:
+            return "fr", "Tiếng Pháp"
+
+        # d) Tiếng Tây Ban Nha: ñ, ¿, ¡ và từ vựng
+        es_chars = len(re.findall(r"[ñ¿¡]", lower_text))
+        es_words = len(re.findall(r"\b(el|la|los|las|de|en|y|que|por|con|una|seguridad|peligro|primeros\s*auxilios)\b", lower_text))
+        if es_chars >= 1 or es_words >= 2:
+            return "es", "Tiếng Tây Ban Nha"
+
+        # Default: Tiếng Anh (en)
+        return "en", "Tiếng Anh"
+
+    @classmethod
     def generate_context_anchor(cls, profile: ContextProfile) -> str:
         """Tạo chuỗi Mỏ Neo Bối Cảnh (Context Anchor) để nhúng vào prompt dịch thuật."""
         glossary_lines = []
@@ -368,6 +455,7 @@ class AIContextProfiler:
 
         anchor = (
             f"=== BỐI CẢNH DỊCH THUẬT CHUYÊN NGÀNH (AI CONTEXT PROFILE) ===\n"
+            f"• Ngôn ngữ nguồn: {profile.detected_lang_name} ({profile.detected_source_lang})\n"
             f"• Lĩnh vực chuyên ngành: {profile.domain}\n"
             f"• Văn phong yêu cầu: {profile.tone}\n"
             f"• Bảng quy tắc thuật ngữ cốt lõi (BẮT BUỘC TUÂN THỦ NGHĨA CHUYÊN NGÀNH):\n"
@@ -390,7 +478,7 @@ class AIContextProfiler:
         """
         Quy trình Vòng 1 hoàn chỉnh:
         1. Trích xuất mẫu văn bản (~300-800 từ đầu tiên).
-        2. Phân tích lĩnh vực, văn phong và thuật ngữ.
+        2. Nhận diện đồng thời bối cảnh/thuật ngữ và ngôn ngữ nguồn tài liệu.
         3. Tạo mỏ neo bối cảnh sẵn sàng chuyển tiếp sang Vòng 2.
         """
         # Trích xuất sample
@@ -402,19 +490,35 @@ class AIContextProfiler:
         domain_key, confidence = cls.classify_domain_heuristic(sample)
         preset = DOMAIN_PRESETS.get(domain_key, DOMAIN_PRESETS["general"])
 
+        # Nhận diện ngôn ngữ nguồn tự động trong Vòng 1
+        detected_code, detected_name = cls.detect_language(sample)
+
+        # Nếu người dùng chỉ định ngôn ngữ cụ thể (khác auto / trống), tôn trọng ngôn ngữ đó
+        norm_source = (source_lang or "").strip().lower()
+        if norm_source and norm_source not in ("auto", "auto-detect", "unknown"):
+            final_src_code = norm_source
+            final_src_name = LANG_CODE_TO_NAME.get(norm_source, detected_name)
+        else:
+            final_src_code = detected_code
+            final_src_name = detected_name
+
         profile = ContextProfile(
             domain=preset["domain"],
             domain_key=domain_key,
             tone=preset["tone"],
             glossary=dict(preset["glossary"]),
             confidence=confidence,
-            sample_excerpt=sample[:300] if sample else ""
+            sample_excerpt=sample[:300] if sample else "",
+            detected_source_lang=final_src_code,
+            detected_lang_name=final_src_name
         )
         profile.context_anchor = cls.generate_context_anchor(profile)
         logger.info(
-            "Vòng 1 (AI Context Profiler) hoàn tất: Lĩnh vực '%s' (độ tin cậy: %.2f)",
+            "Vòng 1 (AI Context Profiler) hoàn tất: Lĩnh vực '%s' (độ tin cậy: %.2f) | Ngôn ngữ nguồn: %s (%s)",
             profile.domain,
-            profile.confidence
+            profile.confidence,
+            profile.detected_lang_name,
+            profile.detected_source_lang
         )
         return profile
 

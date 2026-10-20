@@ -319,19 +319,35 @@
 
             <form id="ai-key-form" onsubmit="event.preventDefault(); window.LuvApp.handleSaveAiKey();">
                 <div class="form-group">
-                    <label class="form-label" for="input-deepseek-key">Khóa API DeepSeek (API Key):</label>
-                    <input type="password" id="input-deepseek-key" class="pro-input font-mono" placeholder="sk-••••••••••••••••••••••••••••••••" autocomplete="new-password" />
-                    <div class="form-hint">
-                        <strong>Lưu ý bảo mật:</strong> Khóa được lưu trực tiếp trên máy chủ. Giao diện tuyệt đối không hiển thị lại chuỗi ký tự thô để chống copy hoặc bị soi từ trình duyệt.
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <label class="form-label" for="input-deepseek-key" style="margin-bottom:0;">Khóa API DeepSeek (API Key):</label>
+                        <button type="button" id="btn-change-ai-key" class="btn-text-action" onclick="window.LuvApp.enableEditAiKey()" style="font-size:0.8rem; color:#38bdf8; background:none; border:none; cursor:pointer; text-decoration:underline;">
+                            ✎ Đổi Key Khác
+                        </button>
+                    </div>
+                    <div style="position: relative;">
+                        <input type="password" id="input-deepseek-key" class="pro-input font-mono" placeholder="Dán mã sk-... vào đây" autocomplete="new-password" style="padding-right: 40px;" />
+                        <button type="button" id="btn-toggle-key-visibility" onclick="window.LuvApp.toggleKeyVisibility()" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: #94a3b8; cursor: pointer;" title="Ẩn/Hiện mã key">
+                            👁
+                        </button>
+                    </div>
+                    <div class="form-hint" style="margin-top: 6px; font-size: 0.8rem; color: #94a3b8;">
+                        🔒 <strong>Cơ chế lưu bền vững:</strong> Khóa được lưu đồng thời trên trình duyệt này và máy chủ. Lần sau mở web sẽ tự động nhận diện và sử dụng mà không cần nhập lại.
                     </div>
                 </div>
 
-                <div id="ai-key-status-box" class="license-alert-box" style="display:none;"></div>
+                <div id="ai-key-status-box" class="license-alert-box" style="display:none; margin-bottom: 12px;"></div>
 
-                <div class="form-submit-row">
-                    <button type="submit" id="btn-submit-ai-key" class="btn-pro-primary btn-block" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                <div class="form-submit-row" style="display: flex; gap: 8px;">
+                    <button type="submit" id="btn-submit-ai-key" class="btn-pro-primary" style="flex: 2; background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
                         <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                        LƯU KHÓA AI BẢO MẬT
+                        LƯU KHÓA AI
+                    </button>
+                    <button type="button" id="btn-test-ai-key" class="btn-pro-secondary" onclick="window.LuvApp.handleTestAiKey()" style="flex: 1.5; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8;" title="Kiểm tra xem khóa có hoạt động và còn số dư không">
+                        ⚡ TEST KEY
+                    </button>
+                    <button type="button" id="btn-clear-ai-key" class="btn-pro-secondary" onclick="window.LuvApp.handleClearAiKey()" style="flex: 0.8; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171;" title="Xóa khóa khỏi trình duyệt và máy chủ">
+                        🗑 Xóa
                     </button>
                 </div>
             </form>

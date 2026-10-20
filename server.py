@@ -15,6 +15,7 @@ import logging
 import tempfile
 import base64
 import zipfile
+import requests
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -224,6 +225,53 @@ def save_ai_key(key: str = Form(...)):
     }
 
 
+@app.post("/api/settings/ai-clear")
+def clear_ai_key():
+    """Xóa khóa DeepSeek API Key khỏi máy chủ."""
+    DeepSeekOCR.save_api_key("")
+    os.environ.pop("DEEPSEEK_API_KEY", None)
+    return {"success": True, "message": "Đã xóa khóa DeepSeek AI thành công khỏi máy chủ."}
+
+
+@app.post("/api/settings/ai-test")
+def test_ai_key(key: Optional[str] = Form(None)):
+    """Kiểm tra tính hợp lệ và kết nối của DeepSeek API Key."""
+    test_key = (key or "").strip() or DeepSeekOCR.get_saved_api_key()
+    if not test_key:
+        return {"success": False, "message": "Chưa có API Key để kiểm tra. Vui lòng nhập khóa sk-..."}
+    
+    headers = {
+        "Authorization": f"Bearer {test_key}",
+        "Content-Type": "application/json"
+    }
+    # Thử nghiệm với DeepSeek-V4.1-Flash trước theo chỉ định, fallback sang deepseek-chat
+    models_to_test = ["DeepSeek-V4.1-Flash", "deepseek-chat"]
+    for m in models_to_test:
+        payload = {
+            "model": m,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 5
+        }
+        try:
+            resp = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=10)
+            if resp.status_code == 200:
+                return {
+                    "success": True,
+                    "model_used": m,
+                    "message": f"✓ Kết nối thành công! Khóa DeepSeek AI hợp lệ và sẵn sàng hoạt động (Model: {m})."
+                }
+            elif resp.status_code == 401:
+                return {"success": False, "message": "✕ Khóa API không hợp lệ hoặc đã bị vô hiệu hóa (HTTP 401)."}
+            elif resp.status_code == 402:
+                return {"success": False, "message": "✕ Tài khoản DeepSeek đã hết số dư khả dụng (HTTP 402 Insufficient Balance)."}
+        except requests.exceptions.Timeout:
+            return {"success": False, "message": "✕ Kết nối tới DeepSeek API bị quá thời gian (Timeout). Vui lòng thử lại."}
+        except Exception as e:
+            logger.warning("Test key error with model %s: %s", m, e)
+    
+    return {"success": False, "message": "✕ Kiểm tra khóa thất bại. Vui lòng kiểm tra lại kết nối mạng hoặc tính hợp lệ của Key."}
+
+
 @app.post("/api/license/activate")
 def activate_license(
     key: str = Form(...),
@@ -405,6 +453,9 @@ async def process_translation(
             )
 
             elapsed = round(time.time() - start_time, 2)
+            c_prof = res.get("context_profile") or {}
+            detected_src = c_prof.get("detected_source_lang", source_lang)
+            detected_name = c_prof.get("detected_lang_name", "Tự động nhận diện")
             return {
                 "success": True,
                 "type": "excel",
@@ -413,47 +464,18 @@ async def process_translation(
                 "download_docx_url": f"/api/download/{out_filename}",  # fallback alias
                 "preview_output_filename": out_filename,
                 "elapsed_seconds": elapsed,
-                "context_profile": res.get("context_profile"),
+                "context_profile": c_prof,
                 "audit_report": res.get("audit_report"),
                 "stages_completed": res.get("stages_completed"),
+                "detected_source_lang": detected_src,
+                "detected_lang_name": detected_name,
                 "details": f"Đã dịch song ngữ thành công {res.get('total_translated_cells', 0)} ô văn bản ({res.get('sheet_count', 1)} Sheet)."
             }
 
         # Case B: Word (.docx, .doc) or PDF (.pdf)
         else:
-            # For PDF files in auto / hybrid mode, utilize the 5-Phase End-to-End Engine
-            if ext == ".pdf" and engine_mode != "ocr_scan":
-                try:
-                    from src.engine import run_pipeline, EngineConfig
-                    out_filename = f"{base_name}_SongNgu_{uuid.uuid4().hex[:6]}.docx"
-                    out_path = os.path.join(OUTPUT_DIR, out_filename)
-                    config = EngineConfig(
-                        engine="offline" if actual_provider in ["neural", "offline"] or not effective_api_key else "deepseek",
-                        api_key=effective_api_key,
-                        enable_visual_qa=False  # Web API: fast and lightweight
-                    )
-                    out_res_path, gate_res = run_pipeline(input_path=saved_path, output_path=out_path, config=config)
-                    docx_file = os.path.basename(out_res_path)
-                    elapsed = round(time.time() - start_time, 2)
-                    return {
-                        "success": True,
-                        "primary_format": "docx",
-                        "docx_path": out_res_path,
-                        "filename": docx_file,
-                        "download_docx_url": f"/api/download/{docx_file}",
-                        "download_url": f"/api/download/{docx_file}",
-                        "preview_output_filename": docx_file,
-                        "elapsed_seconds": elapsed,
-                        "engine_used": "End-to-End 5-Phase Hybrid Geometry-to-OpenXML Engine",
-                        "audit_gate_passed": gate_res.passed,
-                        "audit_report": gate_res.json_report.get("audit_metrics", {}),
-                        "word_priority_note": "Word (.docx) đã sẵn sàng để tải về và chỉnh sửa tức thì.",
-                        "details": f"Đã chuyển đổi và dịch song ngữ hoàn hảo qua 5-Phase Engine (Audit: {'PASS' if gate_res.passed else 'FAIL'})."
-                    }
-                except Exception as ex_eng:
-                    logger.warning("5-Phase Engine fallback to InterlinearTranslator: %s", ex_eng)
-
-            # Word (.docx) is the exclusive output format for both Word and PDF inputs
+            # Word (.docx) is the primary output format for both Word and PDF inputs
+            # Utilizes 3-Stage Pipeline: Vòng 1 (Context Profiler + Auto-detect Language), Vòng 2 (DeepSeek-V4.1-Flash), Vòng 3 (Quality Audit)
             res = InterlinearTranslator.process_interlinear_suite(
                 input_path=saved_path,
                 output_dir=OUTPUT_DIR,
@@ -468,7 +490,7 @@ async def process_translation(
                 font_family=font_family
             )
 
-            # Ensure URLs
+            # Ensure URLs & detected language information
             if isinstance(res, dict):
                 docx_file = os.path.basename(res.get("docx_path", "")) if res.get("docx_path") else None
 
@@ -480,6 +502,10 @@ async def process_translation(
                 res["elapsed_seconds"] = round(time.time() - start_time, 2)
                 res["primary_format"] = "docx"
                 res["word_priority_note"] = "Word (.docx) đã sẵn sàng để tải về và chỉnh sửa tức thì."
+                
+                c_prof = res.get("context_profile") or {}
+                res["detected_source_lang"] = c_prof.get("detected_source_lang", source_lang)
+                res["detected_lang_name"] = c_prof.get("detected_lang_name", "Tự động nhận diện")
 
             return res
 
