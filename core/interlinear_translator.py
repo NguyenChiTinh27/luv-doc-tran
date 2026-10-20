@@ -932,13 +932,13 @@ class InterlinearTranslator:
         }
 
         try:
-            resp = requests.post(cls.DEEPSEEK_API_URL, headers=headers, json=body, timeout=15)
+            resp = requests.post(cls.DEEPSEEK_API_URL, headers=headers, json=body, timeout=60)
             if resp.status_code != 200 and target_model != cls.FALLBACK_MODEL:
                 err_text = resp.text.lower()
                 if any(k in err_text for k in ("model", "not found", "invalid_request", "does not exist", "unsupported")) or resp.status_code in (400, 404):
                     logger.warning("DeepSeek model '%s' failed (%s), fallback sang '%s'", target_model, resp.status_code, cls.FALLBACK_MODEL)
                     body["model"] = cls.FALLBACK_MODEL
-                    resp = requests.post(cls.DEEPSEEK_API_URL, headers=headers, json=body, timeout=15)
+                    resp = requests.post(cls.DEEPSEEK_API_URL, headers=headers, json=body, timeout=60)
 
             if resp.status_code != 200:
                 raise ValueError(f"DeepSeek API trả về lỗi HTTP {resp.status_code}: {resp.text}")
@@ -1680,7 +1680,7 @@ class InterlinearTranslator:
         final_doc_path = os.path.join(output_dir, final_doc_name)
         has_doc = False
         try:
-            doc_res = convert_docx_to_doc(final_docx_path, final_doc_path)
+            doc_res = convert_docx_to_doc(final_docx_path, final_doc_path) if (output_format or "docx").lower().strip() in ["doc", "both", "all"] else None
             if doc_res and os.path.exists(final_doc_path) and os.path.getsize(final_doc_path) > 0:
                 has_doc = True
         except Exception as e:
