@@ -21,11 +21,11 @@ class DeepSeekOCR:
     DEFAULT_API_URL = "https://api.deepseek.com/chat/completions"
     DEFAULT_MODEL = "DeepSeek-V4.1-Flash"
     FALLBACK_MODEL = "deepseek-chat"
-    DEFAULT_API_KEY = "sk-c45de3c9b5674cb4b90c832f10adc3a3"
+    DEFAULT_API_KEY = ""
 
     @classmethod
     def get_saved_api_key(cls) -> Optional[str]:
-        """Lấy API key từ file settings, biến môi trường hoặc khóa mặc định bảo mật hệ thống."""
+        """Lấy API key từ file settings, biến môi trường hoặc cấu hình bảo mật."""
         env_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
         if env_key:
             return env_key
@@ -39,7 +39,7 @@ class DeepSeekOCR:
                         return key
             except Exception:
                 pass
-        return cls.DEFAULT_API_KEY
+        return None
 
     @staticmethod
     def save_api_key(key: str) -> bool:

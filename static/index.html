@@ -45,6 +45,15 @@
                     <span id="trial-timer-text">Đang kết nối...</span>
                 </div>
 
+                <!-- DeepSeek AI Key Button -->
+                <button type="button" id="btn-open-ai-key" class="btn-license-header" style="background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.4); color: #34d399;" onclick="window.LuvApp.openAiKeyModal()" title="Cấu hình DeepSeek API Key (Lưu 1 lần, bảo mật)">
+                    <svg class="pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                    <span id="ai-key-header-label">Khóa AI DeepSeek</span>
+                </button>
+
                 <!-- License Modal Button -->
                 <button type="button" id="btn-open-license" class="btn-license-header" onclick="window.LuvApp.openLicenseModal()">
                     <svg class="pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -283,6 +292,46 @@
                     <button type="submit" id="btn-submit-activate" class="btn-pro-primary btn-block">
                         <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
                         XÁC NHẬN KEY KÍCH HOẠT
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ========================================================== -->
+    <!-- DEEPSEEK AI KEY CONFIGURATION MODAL (ONE-TIME, WRITE-ONLY) -->
+    <!-- ========================================================== -->
+    <div id="modal-ai-key" class="pro-modal-backdrop" style="display:none;">
+        <div class="pro-modal-dialog">
+            <div class="modal-dialog-header">
+                <div class="modal-icon-key" style="background: rgba(16, 185, 129, 0.15); color: #10b981;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="modal-heading">Cấu hình DeepSeek AI Key</h3>
+                    <div style="font-size: 0.82rem; color: #94a3b8;">Lưu một lần duy nhất &bull; Mã hóa bảo mật chống sao chép</div>
+                </div>
+                <button type="button" class="btn-modal-x" onclick="window.LuvApp.closeAiKeyModal()">✕</button>
+            </div>
+
+            <form id="ai-key-form" onsubmit="event.preventDefault(); window.LuvApp.handleSaveAiKey();">
+                <div class="form-group">
+                    <label class="form-label" for="input-deepseek-key">Khóa API DeepSeek (API Key):</label>
+                    <input type="password" id="input-deepseek-key" class="pro-input font-mono" placeholder="sk-••••••••••••••••••••••••••••••••" autocomplete="new-password" />
+                    <div class="form-hint">
+                        <strong>Lưu ý bảo mật:</strong> Khóa được lưu trực tiếp trên máy chủ. Giao diện tuyệt đối không hiển thị lại chuỗi ký tự thô để chống copy hoặc bị soi từ trình duyệt.
+                    </div>
+                </div>
+
+                <div id="ai-key-status-box" class="license-alert-box" style="display:none;"></div>
+
+                <div class="form-submit-row">
+                    <button type="submit" id="btn-submit-ai-key" class="btn-pro-primary btn-block" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                        LƯU KHÓA AI BẢO MẬT
                     </button>
                 </div>
             </form>

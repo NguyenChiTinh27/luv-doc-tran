@@ -18,6 +18,7 @@ window.LuvApp = {
         this.setupDragAndDrop();
         await this.checkLicenseAndTrial();
         this.startTrialCountdown();
+        this.checkAiKeyStatus();
     },
 
     // ── 1. DEVICE IDENTIFIER (ANTI-TAMPER FINGERPRINT) ───────────────────
@@ -600,6 +601,124 @@ window.LuvApp = {
             if (submitBtn) {
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = `<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> XÁC NHẬN KEY KÍCH HOẠT`;
+            }
+        }
+    },
+
+    // ── 7.5. DEEPSEEK AI KEY MANAGEMENT (ONE-TIME, WRITE-ONLY, ANTI-COPY) ──
+    checkAiKeyStatus: async function() {
+        try {
+            const resp = await fetch("/api/settings/ai-status");
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const btnLabel = document.getElementById("ai-key-header-label");
+            const btn = document.getElementById("btn-open-ai-key");
+            const statusBox = document.getElementById("ai-key-status-box");
+            const input = document.getElementById("input-deepseek-key");
+
+            if (data.configured) {
+                if (btnLabel) btnLabel.textContent = "✓ DeepSeek AI Sẵn Sàng";
+                if (btn) {
+                    btn.style.background = "rgba(16, 185, 129, 0.2)";
+                    btn.style.borderColor = "rgba(16, 185, 129, 0.6)";
+                    btn.style.color = "#10b981";
+                }
+                if (input) {
+                    input.placeholder = data.masked_key || "sk-•••••••••••••••••••••••••••••••• (Đã lưu)";
+                    input.value = ""; // Anti-copy: always blank in DOM
+                }
+                if (statusBox) {
+                    statusBox.className = "license-alert-box alert-success";
+                    statusBox.innerHTML = `✓ <strong>Đã kết nối DeepSeek AI:</strong> ${data.masked_key || "Khóa bảo mật đã lưu trên máy chủ."}<br><small style="opacity:0.85;">Khóa được lưu trữ an toàn, chống sao chép và tự động dùng cho mọi tác vụ dịch.</small>`;
+                    statusBox.style.display = "block";
+                }
+            } else {
+                if (btnLabel) btnLabel.textContent = "Chưa có Key AI";
+                if (btn) {
+                    btn.style.background = "rgba(245, 158, 11, 0.15)";
+                    btn.style.borderColor = "rgba(245, 158, 11, 0.5)";
+                    btn.style.color = "#f59e0b";
+                }
+                if (input) {
+                    input.placeholder = "Dán mã sk-... vào đây";
+                    input.value = "";
+                }
+                if (statusBox) {
+                    statusBox.className = "license-alert-box alert-warning";
+                    statusBox.innerHTML = "Chưa lưu khóa DeepSeek API Key. Vui lòng nhập khóa mới để kích hoạt dịch thuật AI.";
+                    statusBox.style.display = "block";
+                }
+            }
+        } catch (e) {
+            console.warn("Could not check AI Key status:", e);
+        }
+    },
+
+    openAiKeyModal: function() {
+        const modal = document.getElementById("modal-ai-key");
+        if (modal) modal.style.display = "flex";
+        this.checkAiKeyStatus();
+    },
+
+    closeAiKeyModal: function() {
+        const modal = document.getElementById("modal-ai-key");
+        if (modal) modal.style.display = "none";
+    },
+
+    handleSaveAiKey: async function() {
+        const input = document.getElementById("input-deepseek-key");
+        const statusBox = document.getElementById("ai-key-status-box");
+        const submitBtn = document.getElementById("btn-submit-ai-key");
+
+        const key = (input ? input.value : "").trim();
+        if (!key) {
+            if (statusBox) {
+                statusBox.className = "license-alert-box alert-error";
+                statusBox.textContent = "Vui lòng nhập mã DeepSeek API Key (bắt đầu bằng sk-...)";
+                statusBox.style.display = "block";
+            }
+            return;
+        }
+
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = `<span class="spinner-mini"></span> Đang lưu khóa an toàn...`;
+        }
+
+        try {
+            const formData = new FormData();
+            formData.append("key", key);
+
+            const resp = await fetch("/api/settings/ai-key", {
+                method: "POST",
+                body: formData
+            });
+
+            const res = await resp.json();
+            if (resp.ok && res.success) {
+                if (input) input.value = ""; // Anti-copy: immediately wipe from DOM!
+                this.showToast(res.message || "Đã lưu khóa DeepSeek AI an toàn!", "success");
+                await this.checkAiKeyStatus();
+                setTimeout(() => {
+                    this.closeAiKeyModal();
+                }, 1200);
+            } else {
+                if (statusBox) {
+                    statusBox.className = "license-alert-box alert-error";
+                    statusBox.textContent = res.message || "Lưu khóa thất bại!";
+                    statusBox.style.display = "block";
+                }
+            }
+        } catch (e) {
+            if (statusBox) {
+                statusBox.className = "license-alert-box alert-error";
+                statusBox.textContent = "Lỗi kết nối máy chủ: " + e.message;
+                statusBox.style.display = "block";
+            }
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> LƯU KHÓA AI BẢO MẬT`;
             }
         }
     },

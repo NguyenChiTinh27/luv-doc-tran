@@ -69,114 +69,18 @@ ROMAN_NUMERALS = [
 # ─────────────────────────────────────────────────────────────────────────────
 # R9: ZERO DEEPSEEK API COST CONSTRAINT & ZERO COST GUARD
 # ─────────────────────────────────────────────────────────────────────────────
-class ApiCostViolationError(Exception):
-    """Raised when an external paid API call is attempted during testing/QC."""
-    pass
+import importlib.util
 
-
-class ZeroCostGuard:
-    """
-    Runtime guard that strictly blocks any network calls to api.deepseek.com
-    or other paid translation endpoints.
-    Can be used as a context manager or enabled globally.
-    """
-    _is_active = False
-    _original_requests_send = None
-    _original_httpx_send = None
-    _original_urllib_urlopen = None
-
-    @classmethod
-    def enable(cls):
-        if cls._is_active:
-            return
-        cls._is_active = True
-
-        # Intercept requests
-        try:
-            import requests
-            cls._original_requests_send = requests.Session.send
-
-            def guarded_requests_send(session_self, request, **kwargs):
-                url = str(getattr(request, "url", ""))
-                if "api.deepseek.com" in url or "api.openai.com" in url:
-                    raise ApiCostViolationError(
-                        f"Prohibited paid API call to {url} blocked by ZeroCostGuard! (R9 Cost Constraint)"
-                    )
-                return cls._original_requests_send(session_self, request, **kwargs)
-
-            requests.Session.send = guarded_requests_send
-        except ImportError:
-            pass
-
-        # Intercept httpx
-        try:
-            import httpx
-            cls._original_httpx_send = httpx.Client.send
-
-            def guarded_httpx_send(client_self, request, **kwargs):
-                url = str(getattr(request, "url", ""))
-                if "api.deepseek.com" in url or "api.openai.com" in url:
-                    raise ApiCostViolationError(
-                        f"Prohibited paid API call to {url} blocked by ZeroCostGuard! (R9 Cost Constraint)"
-                    )
-                return cls._original_httpx_send(client_self, request, **kwargs)
-
-            httpx.Client.send = guarded_httpx_send
-        except ImportError:
-            pass
-
-        # Intercept urllib
-        try:
-            import urllib.request
-            cls._original_urllib_urlopen = urllib.request.urlopen
-
-            def guarded_urlopen(url, *args, **kwargs):
-                url_str = str(getattr(url, "full_url", url))
-                if "api.deepseek.com" in url_str or "api.openai.com" in url_str:
-                    raise ApiCostViolationError(
-                        f"Prohibited paid API call to {url_str} blocked by ZeroCostGuard! (R9 Cost Constraint)"
-                    )
-                return cls._original_urllib_urlopen(url, *args, **kwargs)
-
-            urllib.request.urlopen = guarded_urlopen
-        except Exception:
-            pass
-
-    @classmethod
-    def disable(cls):
-        if not cls._is_active:
-            return
-        cls._is_active = False
-        try:
-            import requests
-            if cls._original_requests_send:
-                requests.Session.send = cls._original_requests_send
-                cls._original_requests_send = None
-        except ImportError:
-            pass
-
-        try:
-            import httpx
-            if cls._original_httpx_send:
-                httpx.Client.send = cls._original_httpx_send
-                cls._original_httpx_send = None
-        except ImportError:
-            pass
-
-        try:
-            import urllib.request
-            if cls._original_urllib_urlopen:
-                urllib.request.urlopen = cls._original_urllib_urlopen
-                cls._original_urllib_urlopen = None
-        except Exception:
-            pass
-
-    def __enter__(self):
-        self.enable()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.disable()
+if "src.engine.phase3_bilingual.cost_guard" in sys.modules:
+    from src.engine.phase3_bilingual.cost_guard import ZeroCostGuard, ApiCostViolationError
+else:
+    _cg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src", "engine", "phase3_bilingual", "cost_guard.py"))
+    _spec = importlib.util.spec_from_file_location("src.engine.phase3_bilingual.cost_guard", _cg_path)
+    _mod = importlib.util.module_from_spec(_spec)
+    sys.modules["src.engine.phase3_bilingual.cost_guard"] = _mod
+    _spec.loader.exec_module(_mod)
+    ZeroCostGuard = _mod.ZeroCostGuard
+    ApiCostViolationError = _mod.ApiCostViolationError
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -764,13 +668,21 @@ class RuleBasedSynthesizer:
         if lower_clean in OfflineGlossary.FIELD_LABELS:
             return OfflineGlossary.FIELD_LABELS[lower_clean]
 
+        # 4.5. Fast cache lookup before label-value deconstruction
+        from src.engine.phase3_bilingual.full_sentence_translator import FullSentenceTranslator
+        cached = FullSentenceTranslator.lookup_cache(clean_text)
+        if cached:
+            return FullSentenceTranslator.post_repair(cached)
+
         # 5. Label : Value line deconstruction
         m_lv = cls.LABEL_VALUE_RE.match(clean_text)
         if m_lv:
             label, val = m_lv.group(1).strip(), m_lv.group(2).strip()
-            trans_label = cls.synthesize(label)
-            trans_val = cls.synthesize(val)
-            return f"{trans_label}: {trans_val}"
+            lbl_lower = label.lower().lstrip("-•* \t")
+            if not re.match(r"^(?:if\b|when\b|in\s+case\s+of\b|as\b|after\b|before\b)", lbl_lower):
+                trans_label = cls.synthesize(label)
+                trans_val = cls.synthesize(val)
+                return f"{trans_label}: {trans_val}"
 
         # 6. Delegate non-exact matches to FullSentenceTranslator (R1: Zero Mock, Zero (Thông tin))
         from src.engine.phase3_bilingual.full_sentence_translator import FullSentenceTranslator
@@ -1080,31 +992,31 @@ class ReflowUnlocker:
                         continue
             idx += 1
 
-            # Footer with dynamic PAGE / NUMPAGES
-            footer = section.footer
-            if footer:
-                fp = footer.paragraphs[0]
-                fp.text = ""
-                fp.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.RIGHT
-                r_pre = fp.add_run("Trang ")
-                r_pre.font.name = DEFAULT_FONT_NAME
-                r_pre.font.size = Pt(8.5)
-                r_pre.font.color.rgb = RGBColor(128, 128, 128)
+        # Footer with dynamic PAGE / NUMPAGES
+        footer = section.footer
+        if footer:
+            fp = footer.paragraphs[0]
+            fp.text = ""
+            fp.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.RIGHT
+            r_pre = fp.add_run("Trang ")
+            r_pre.font.name = DEFAULT_FONT_NAME
+            r_pre.font.size = Pt(8.5)
+            r_pre.font.color.rgb = RGBColor(128, 128, 128)
 
-                # PAGE field
-                fld_page = OxmlElement("w:fldSimple")
-                fld_page.set(qn("w:instr"), "PAGE")
-                fp._p.append(fld_page)
+            # PAGE field
+            fld_page = OxmlElement("w:fldSimple")
+            fld_page.set(qn("w:instr"), "PAGE")
+            fp._p.append(fld_page)
 
-                r_mid = fp.add_run(" / ")
-                r_mid.font.name = DEFAULT_FONT_NAME
-                r_mid.font.size = Pt(8.5)
-                r_mid.font.color.rgb = RGBColor(128, 128, 128)
+            r_mid = fp.add_run(" / ")
+            r_mid.font.name = DEFAULT_FONT_NAME
+            r_mid.font.size = Pt(8.5)
+            r_mid.font.color.rgb = RGBColor(128, 128, 128)
 
-                # NUMPAGES field
-                fld_numpages = OxmlElement("w:fldSimple")
-                fld_numpages.set(qn("w:instr"), "NUMPAGES")
-                fp._p.append(fld_numpages)
+            # NUMPAGES field
+            fld_numpages = OxmlElement("w:fldSimple")
+            fld_numpages.set(qn("w:instr"), "NUMPAGES")
+            fp._p.append(fld_numpages)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1130,13 +1042,23 @@ class GridReconstructor:
         # Do not match Section headers
         if text.strip().lower().startswith("section") or text.strip().lower().startswith("mục"):
             return False
-        return bool(cls.LABEL_VALUE_SPLIT_RE.match(text.strip()))
+        m = cls.LABEL_VALUE_SPLIT_RE.match(text.strip())
+        if not m:
+            return False
+        lbl = m.group(1).strip()
+        lbl_lower = lbl.lower().lstrip("-•* \t")
+        if re.match(r"^(?:if\b|when\b|in\s+case\s+of\b|as\b|after\b|before\b)", lbl_lower):
+            return False
+        return True
 
     @classmethod
     def parse_label_value(cls, text: str) -> Tuple[str, str]:
         m = cls.LABEL_VALUE_SPLIT_RE.match(text.strip())
         if m:
-            return m.group(1).strip(), m.group(2).strip()
+            lbl = m.group(1).strip()
+            lbl_lower = lbl.lower().lstrip("-•* \t")
+            if not re.match(r"^(?:if\b|when\b|in\s+case\s+of\b|as\b|after\b|before\b)", lbl_lower):
+                return lbl, m.group(2).strip()
         return text.strip(), ""
 
     @classmethod
@@ -1293,7 +1215,11 @@ class ParagraphConsolidator:
     and shares consistent indentation/font.
     Prevents fragmented sentence translation ("Chống băm nát câu văn").
     """
-    TERMINAL_PUNCTUATION = {".", ";", ":", "!", "?", "...", '."', '!"', '?"'}
+    TERMINAL_PUNCTUATION = {".", ";", "!", "?", "...", '."', '!"', '?"'}
+    KNOWN_NON_MERGE_HEADINGS = {
+        "disclaimer", "reference", "label elements", "personal protective equipment",
+        "abbreviation and acronyms", "precautionary statements", "hazard statements"
+    }
 
     @classmethod
     def should_merge(cls, upper_text: str, lower_text: str) -> bool:
@@ -1304,19 +1230,34 @@ class ParagraphConsolidator:
         if not u or not l:
             return False
         # Do not merge section headers
-        if u.lower().startswith("section") or l.lower().startswith("section"):
+        if u.lower().startswith("section") or l.lower().startswith("section") or u.lower().startswith("mục") or l.lower().startswith("mục"):
             return False
-        # Do not merge table-like label:value lines
-        if ":" in u or ":" in l:
+        # Do not merge known standalone headings or subheadings
+        u_lower = u.lower().lstrip("-•* \t")
+        l_lower = l.lower().lstrip("-•* \t")
+        if u_lower in cls.KNOWN_NON_MERGE_HEADINGS or any(u_lower.startswith(h) for h in cls.KNOWN_NON_MERGE_HEADINGS):
             return False
-        # Do not merge bullet points
-        if l.startswith("-") or l.startswith("•") or l.startswith("*"):
+        if l_lower in cls.KNOWN_NON_MERGE_HEADINGS or any(l_lower.startswith(h) for h in cls.KNOWN_NON_MERGE_HEADINGS):
             return False
-        # If upper line ends with terminal punctuation, do NOT merge
-        if u[-1] in cls.TERMINAL_PUNCTUATION or any(u.endswith(p) for p in cls.TERMINAL_PUNCTUATION):
+        # Do not merge bullet items with following non-bullet lines if upper ends with terminal punctuation or lower is a heading
+        if u.startswith(("-", "•", "*")) and not l.startswith(("-", "•", "*")):
+            if u[-1] in {".", ";", "!", "?"}:
+                return False
+            if l_lower in cls.KNOWN_NON_MERGE_HEADINGS or any(l_lower.startswith(h) for h in cls.KNOWN_NON_MERGE_HEADINGS):
+                return False
+        # Do not merge if lower line is an independent label:value line
+        if GridReconstructor.is_label_value_line(l):
             return False
-        # If upper line looks like a title (short and uppercase)
-        if len(u) < 30 and u.isupper():
+        # Do not merge bullet points if lower line starts a new bullet
+        if (l.startswith("-") or l.startswith("•") or l.startswith("*")) and not u.endswith(("-", "•", "*")):
+            return False
+        # If upper line ends with terminal punctuation, do NOT merge (unless lower starts with lowercase continuation)
+        if u[-1] in {".", ";", "!", "?"} or any(u.endswith(p) for p in cls.TERMINAL_PUNCTUATION):
+            if l and l[0].islower() and not u.endswith((".", ";")):
+                return True
+            return False
+        # If upper line looks like a title (short and uppercase) and lower is not a continuation
+        if len(u) < 30 and u.isupper() and (not l or not l[0].islower()):
             return False
         return True
 
@@ -1349,6 +1290,13 @@ class ParagraphConsolidator:
                             runs[0].append(t_node)
                         t_node.text = merged
                         t_node.set(qn("xml:space"), "preserve")
+                    else:
+                        r_node = OxmlElement("w:r")
+                        t_node = OxmlElement("w:t")
+                        t_node.text = merged
+                        t_node.set(qn("xml:space"), "preserve")
+                        r_node.append(t_node)
+                        el_curr.append(r_node)
                     # Remove el_next
                     body.remove(el_next)
                     children = list(body)
@@ -2033,7 +1981,7 @@ def reconstruct_bilingual_document(
             progress_callback=progress_callback
         )
 
-        return res["output_path"]
+        return output_path
 
     finally:
         if temp_docx_to_clean and os.path.exists(temp_docx_to_clean):

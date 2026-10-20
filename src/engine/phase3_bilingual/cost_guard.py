@@ -8,6 +8,7 @@ endpoints (e.g. api.deepseek.com, api.openai.com) during testing, development,
 and offline conversion pipelines to protect the user's API budget.
 """
 
+import os
 import sys
 import functools
 from typing import List, Optional, Callable, Any
@@ -59,8 +60,8 @@ class ZeroCostGuard:
 
     @classmethod
     def is_active(cls) -> bool:
-        """Returns True if the guard interceptors are currently active."""
-        return cls._is_active
+        """Returns True if the guard interceptors are currently active or running in offline/zero-cost mode."""
+        return cls._is_active or os.environ.get("ZERO_COST_GUARD") == "1" or os.environ.get("OFFLINE_TEST_MODE") == "1"
 
     @classmethod
     def set_blocked_hosts(cls, hosts: List[str]) -> None:

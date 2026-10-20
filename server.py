@@ -183,6 +183,47 @@ def get_license_status(device_id: str = "", key: str = ""):
         }
 
 
+@app.get("/api/settings/ai-status")
+def get_ai_key_status():
+    """Checks if DeepSeek API Key is configured. Never exposes raw key to client."""
+    saved_key = DeepSeekOCR.get_saved_api_key()
+    if saved_key and saved_key.strip():
+        clean = saved_key.strip()
+        prefix = clean[:5] if len(clean) >= 5 else "sk-"
+        suffix = clean[-3:] if len(clean) >= 8 else ""
+        masked = f"{prefix}{'•' * 20}{suffix}"
+        return {
+            "configured": True,
+            "masked_key": masked
+        }
+    return {
+        "configured": False,
+        "masked_key": ""
+    }
+
+
+@app.post("/api/settings/ai-key")
+def save_ai_key(key: str = Form(...)):
+    """Saves user's DeepSeek API Key to server securely. One-time save, write-only, anti-copy."""
+    clean_key = (key or "").strip()
+    if not clean_key:
+        return {"success": False, "message": "Khóa API không được để trống."}
+    
+    # Save to settings.json and environment
+    DeepSeekOCR.save_api_key(clean_key)
+    os.environ["DEEPSEEK_API_KEY"] = clean_key
+    
+    prefix = clean_key[:5] if len(clean_key) >= 5 else "sk-"
+    suffix = clean_key[-3:] if len(clean_key) >= 8 else ""
+    masked = f"{prefix}{'•' * 20}{suffix}"
+    
+    return {
+        "success": True,
+        "message": "Đã lưu khóa DeepSeek AI thành công và bảo mật trên máy chủ!",
+        "masked_key": masked
+    }
+
+
 @app.post("/api/license/activate")
 def activate_license(
     key: str = Form(...),
